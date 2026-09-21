@@ -1,0 +1,139 @@
+================================================================================
+ ASCEND-ALL — Installation Guide
+ Laptop-driven AI-agent scientific computing: Hazel · NCShare · hurricane
+ NC State AI Hub for Science and OIT Advanced Computing team
+ with Duke OIT Research Computing and Support Services (NCShare model)
+ Contact: Dr. Paul Liu (jpliu@ncsu.edu), Andrew Petersen (aapeters@ncsu.edu),
+          Dr. Uthpala Herath (uthpala.herath@duke.edu)
+================================================================================
+
+WHAT THIS IS
+
+ASCEND (Autonomous Scientific Computing Engine for Novel Discovery) automates
+scientific computing with an AI agent (Claude Code) plus a controlled command
+layer. In this bundle the agent runs on YOUR laptop for all three resources —
+nothing to install or log in on a cluster node — and reaches each resource
+over multiplexed ssh: you authenticate once per work session; after that,
+every command the agent sends runs with no prompt.
+
+  ascend-hazel      NCSU Hazel HPC. The shared login node is used ONLY for
+                    job scheduling (sbatch/squeue/hpcrun) and environment
+                    builds (conda/pip/module — the login node has internet;
+                    compute nodes don't). Everything that computes runs
+                    inside a Slurm job with typed GPU requests
+                    (e.g. --gres=gpu:l40s:1). No VCL reservation, no VCL
+                    session limits (30 days faculty / 10 hours students).
+  ascend-ncshare    NCShare. Two proxy aliases (ncshare-agent CPU,
+                    ncshare-agent-gpu H200) transparently provision or reuse
+                    SLURM jobs per command.
+  ascend-hurricane  MEAS single-GPU box (RTX PRO 6000 Blackwell, ~98 GB).
+                    No scheduler — the agent runs work in place, one heavy
+                    job at a time, nvidia-smi before heavy runs.
+  ascend-all        The router. Describe the job; it probes live capacity,
+                    recommends a resource, and launches that launcher.
+
+Because the agent lives on the laptop, keep the laptop on and connected while
+the agent is actively working. Slurm jobs already submitted keep running with
+the lid closed; reopen, re-warm the link, and `claude --resume` to continue.
+
+--------------------------------------------------------------------------------
+STEP 0 — PREREQUISITES
+--------------------------------------------------------------------------------
+
+* An account on at least one resource:
+    Hazel     Unity ID in an HPC project (ssh <unityID>@login.hpc.ncsu.edu works)
+    NCShare   an NCShare username with a /work/<user> directory
+    hurricane an account on the box (MEAS)
+* macOS, Linux, or Windows + WSL (Ubuntu). Windows: do EVERYTHING inside the
+  Ubuntu shell; pull the zip from /mnt/c inside Ubuntu; never work under
+  /mnt/c. Fix stripped permissions with:
+      sudo chown -R $USER:$USER <dir>  &&  chmod -R u+x <dir>
+  (setup.sh also self-heals execute bits at startup.)
+* Claude Code with a Claude subscription on the laptop — setup offers to
+  install it (curl -fsSL https://claude.ai/install.sh | bash); afterwards run
+  `claude` once and log in.
+
+--------------------------------------------------------------------------------
+STEP 1 — INSTALL
+--------------------------------------------------------------------------------
+
+    unzip ascend-all.zip && cd ascend-all
+    bash setup.sh
+
+The script asks which resource to set up and loops until you say done; re-run
+any time to add another. Per resource it: creates the ssh alias if missing,
+warms the link (a helper terminal opens — you only type password/Duo there),
+deploys the harness to the resource (file copies, no compute), and installs
+the laptop launcher. It finishes by installing the ascend-all router.
+KEEP THIS FOLDER after install — the commands link into it.
+
+The ssh aliases it manages, for reference:
+
+  Hazel (password + Duo once per 8h):
+    Host hazel
+      HostName login.hpc.ncsu.edu
+      User <unityID>
+      ControlMaster auto
+      ControlPath ~/.ssh/cm-%r@%h-%p
+      ControlPersist 8h
+      ServerAliveInterval 30
+      ServerAliveCountMax 4
+
+  NCShare (from userguide.ncshare.org/guides/ai; provisions SLURM jobs):
+    ncshare-agent and ncshare-agent-gpu Host blocks — setup writes them
+    verbatim with your username; they need ~/.ssh/sockets to exist.
+
+  hurricane (key auth — run ssh-copy-id hurricane once; no Duo):
+    Host hurricane
+      HostName hurricane.meas.ncsu.edu
+      User <unityID>
+      ControlMaster auto
+      ControlPath ~/.ssh/sockets/%r@%h-%p
+      ControlPersist 8h
+      ServerAliveInterval 30
+      ServerAliveCountMax 4
+    NOTE: hurricane's DNS is campus-internal and its address is private
+    (10.68.x). On campus WiFi it just works (pin the IP in /etc/hosts if your
+    laptop uses an external DNS resolver). Off campus, route through a warm
+    Hazel link with a ProxyJump — ask the box's admin for the current pattern.
+
+--------------------------------------------------------------------------------
+STEP 2 — VERIFY (from a NEW terminal)
+--------------------------------------------------------------------------------
+
+    ascend-hazel --check        # socket probe + login node / slurm / tools
+    ascend-ncshare --check      # tests both proxy aliases end to end
+    ascend-hurricane --check    # box, GPU, claude, tmux
+    ascend-all                  # router: probe + recommendation
+
+Fixes: command not found -> source ~/.bashrc (or add ~/.local/bin to PATH);
+hazel link COLD -> ssh hazel once, re-check; ncshare exit 255 with no message
+-> mkdir -p ~/.ssh/sockets && chmod 700 ~/.ssh/sockets; first ncshare connect
+is silent up to ~4 min while SLURM provisions — wait, never Ctrl-C.
+
+--------------------------------------------------------------------------------
+STEP 3 — DAILY USE
+--------------------------------------------------------------------------------
+
+    ssh hazel                    # warm links once per session (Duo)
+    ascend-all                   # or go straight to a specific launcher
+    cd <project> && ascend-hazel / ascend-ncshare / ascend-hurricane
+
+First start in a project seeds AGENTS.md — the agent's standing instructions
+for that resource (execution policy, storage and conda rules, when to suggest
+a different resource) — personalized with your username.
+
+Key per-resource rules the agents enforce:
+  Hazel    login node = scheduling + env builds only; typed gres mandatory;
+           conda envs with --prefix under /share/<user> (never bare -n; /home
+           is 15 GB / 10k files); /share purges after 30 days idle.
+  NCShare  first command after idle can take ~1 min (job provisioning);
+           /work/<user> purges after 75 days.
+  hurricane one GPU shared by courtesy — nvidia-smi first, one heavy job at
+           a time; long runs in tmux; Blackwell needs CUDA 12.8+/cu128 wheels.
+
+Advanced (Hazel): if you need the agent to keep working with the laptop
+closed, the separate ASCEND-VCL package runs the agent on a personal HPC-VCL
+node inside tmux (ascend-vcl --tmux). Both Hazel models coexist.
+
+================================================================================

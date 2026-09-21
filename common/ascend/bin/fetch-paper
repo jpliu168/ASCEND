@@ -1,0 +1,796 @@
+#!/usr/bin/env python3
+"""fetch-paper -- resolve a DOI or article URL to an open-access PDF and download it.
+
+ASCEND helper. stdlib only (urllib), JSON out, no pip deps.
+
+Usage:
+  fetch-paper 10.22541/essoar.15007973/v1
+  fetch-paper https://essopenarchive.org/doi/full/10.22541/essoar.15007973/v1
+  fetch-paper <doi-or-url> --out /work/$USER/agent-projects/X/paper
+  fetch-paper <doi-or-url> --dry-run          # show candidate URLs, fetch nothing
+
+Strategy (stop at first URL that returns a real PDF):
+  1. publisher-specific direct patterns (ESS Open Archive / ESSOAr, arXiv, ...)
+  2. OpenAlex API  -> best_oa_location / primary_location pdf_url
+  3. Unpaywall API -> best_oa_location.url_for_pdf
+  4. Crossref API  -> link[] entries with content-type application/pdf
+  6. RENDER (off-campus only, e.g. the Mac): some publishers serve scripts a JavaScript
+     shell (ScienceDirect: 200 OK, ~11 visible chars). If local Chrome exists, render the
+     landing page ONCE with headless Chrome in a throwaway anonymous profile and keep it
+     only if it passes the full-text test. Anonymous + off-campus means it can only ever
+     retrieve what any visitor can -- open-access content -- never subscription material.
+     Disabled on campus (there the campus IP would make it a subscription scraper; use the
+     institutional route or a manual download instead). --no-render turns it off.
+  5. INSTITUTIONAL (only on an NC State campus-IP host such as an HPC-VCL node):
+     publisher landing page -> citation_pdf_url, the licensed subscription copy.
+     One paper per call, human-paced, rate-capped, no crawling. Auto-detected;
+     --institutional / --no-institutional or FETCH_PAPER_INSTITUTIONAL=1|0 override.
+Every attempt is recorded; a saved file is verified to start with %PDF.
+Exit 0 only if a verified PDF was written (or --dry-run).
+"""
+import getpass, hashlib, json, os, re, shutil, subprocess, sys, tempfile, urllib.request, urllib.error, urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import datetime
+
+UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+MAIL = os.environ.get("FETCH_PAPER_EMAIL") or f"{getpass.getuser()}@ncsu.edu"  # polite-contact for OA APIs
+TIMEOUT = 60
+
+def http_get(url, accept="*/*"):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": UA, "Accept": accept,
+        "Accept-Language": "en-US,en;q=0.9", "Referer": "https://doi.org/"})
+    return urllib.request.urlopen(req, timeout=TIMEOUT)
+
+def get_json(url):
+    with http_get(url, "application/json") as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+def norm_doi(arg):
+    """Extract a bare DOI (plus essoar /vN version if present) from a DOI or URL.
+
+    arXiv inputs -- an arxiv.org/abs|pdf URL or a bare ID like 2606.00038 --
+    are mapped to their canonical DOI form 10.48550/arxiv.<id>."""
+    s = arg.strip()
+    m = re.search(r"arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)", s, re.I)
+    if not m:
+        m = re.fullmatch(r"(\d{4}\.\d{4,5}(?:v\d+)?)", s)  # bare arXiv id
+    if m:
+        return f"10.48550/arxiv.{m.group(1)}", None
+    m = re.search(r"nature\.com/articles/([A-Za-z0-9.-]+?)(?:\.pdf)?(?:[?#]|$)", s, re.I)
+    if m:
+        return f"10.1038/{m.group(1)}", None
+    s = re.sub(r"^https?://(dx\.)?doi\.org/", "", s)
+    m = re.search(r"(10\.\d{4,9}/[^\s?#]+)", s)
+    if not m:
+        return None, None
+    doi = m.group(1).rstrip("/.")
+    ver = None
+    vm = re.search(r"^(.*?)/(v\d+)$", doi)
+    if vm and "essoar" in doi:
+        doi, ver = vm.group(1), vm.group(2)
+    return doi, ver
+
+def candidates(doi, ver, tried_note):
+    """Publisher-specific direct PDF URL guesses, cheapest first."""
+    out = []
+    if "essoar" in doi:  # ESS Open Archive (Atypon; 403s non-browser UAs sometimes)
+        v = ver or "v1"
+        out.append((f"https://essopenarchive.org/doi/pdf/{doi}/{v}",
+                    "essopenarchive direct /doi/pdf/ pattern"))
+    m = re.match(r"10\.48550/arxiv\.(.+)$", doi, re.I)
+    if m:
+        out.append((f"https://arxiv.org/pdf/{m.group(1)}", "arXiv direct"))
+    if doi.startswith("10.1126/"):  # Science/AAAS (Atypon; may bot-block like essoar)
+        out.append((f"https://www.science.org/doi/pdf/{doi}",
+                    "science.org direct /doi/pdf/ pattern"))
+    if doi.startswith("10.1038/"):  # Springer Nature: OA articles serve <id>.pdf;
+        aid = doi.split("/", 1)[1]  # paywalled ones return HTML -> %PDF check refuses
+        out.append((f"https://www.nature.com/articles/{aid}.pdf",
+                    "nature.com direct .pdf (works for open-access articles)"))
+    return out
+
+def api_candidates(doi, errors):
+    out = []
+    try:  # OpenAlex: no key needed
+        w = get_json(f"https://api.openalex.org/works/doi:{doi}")
+        for loc in [w.get("best_oa_location"), w.get("primary_location")]:
+            if loc and loc.get("pdf_url"):
+                out.append((loc["pdf_url"], "OpenAlex"))
+    except Exception as e:
+        errors.append(f"openalex: {e}")
+    try:  # Unpaywall: free, needs email param
+        u = get_json(f"https://api.unpaywall.org/v2/{doi}?email={MAIL}")
+        loc = u.get("best_oa_location") or {}
+        if loc.get("url_for_pdf"):
+            out.append((loc["url_for_pdf"], "Unpaywall"))
+    except Exception as e:
+        errors.append(f"unpaywall: {e}")
+    try:  # Crossref
+        c = get_json(f"https://api.crossref.org/works/{doi}")
+        for l in c.get("message", {}).get("link", []):
+            if "pdf" in (l.get("content-type") or ""):
+                out.append((l.get("URL"), "Crossref link[]"))
+    except Exception as e:
+        errors.append(f"crossref: {e}")
+    seen, uniq = set(), []
+    for u, src in out:
+        if u and u not in seen:
+            seen.add(u); uniq.append((u, src))
+    return uniq
+
+def epmc_candidates(doi, errors):
+    """Europe PMC: open-access copies (incl. author manuscripts) of papers from
+    any journal -- often the only automated route for Nature/Science biomed and
+    NIH/ERC-funded work whose journal page bot-blocks."""
+    out = []
+    try:
+        q = urllib.parse.quote(f'DOI:"{doi}"')
+        j = get_json("https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+                     f"?query={q}&format=json&resultType=core&pageSize=5")
+        for r in j.get("resultList", {}).get("result", []):
+            for u in (r.get("fullTextUrlList") or {}).get("fullTextUrl", []):
+                if (u.get("documentStyle") or "").lower() == "pdf" and u.get("url"):
+                    out.append((u["url"], f"Europe PMC fullTextUrl ({u.get('site', '?')})"))
+            pmcid = r.get("pmcid")
+            if pmcid and (r.get("isOpenAccess") == "Y" or r.get("inEPMC") == "Y"):
+                out.append((f"https://europepmc.org/articles/{pmcid}?pdf=render",
+                            f"Europe PMC {pmcid} (open-access copy)"))
+    except Exception as e:
+        errors.append(f"europepmc: {e}")
+    seen, uniq = set(), []
+    for u, src in out:
+        if u not in seen:
+            seen.add(u); uniq.append((u, src))
+    return uniq
+
+def get_title(doi, errors):
+    """Paper title from Crossref, falling back to OpenAlex."""
+    try:
+        c = get_json(f"https://api.crossref.org/works/{doi}")
+        t = c.get("message", {}).get("title") or []
+        if t:
+            return t[0]
+    except Exception as e:
+        errors.append(f"crossref title: {e}")
+    try:
+        w = get_json(f"https://api.openalex.org/works/doi:{doi}")
+        if w.get("title"):
+            return w["title"]
+    except Exception as e:
+        errors.append(f"openalex title: {e}")
+    return None
+
+def _norm_tokens(t):
+    return set(re.findall(r"[a-z0-9]+", t.lower()))
+
+def arxiv_by_title(title, errors):
+    """LAST RESORT: search the arXiv API by title. Returns (pdf_url, note) for a
+    high-confidence match, else None. A match is a PREPRINT, not the version of
+    record -- the caller must record that distinction."""
+    try:
+        q = urllib.parse.quote(f'ti:"{title}"')
+        url = f"https://export.arxiv.org/api/query?search_query={q}&max_results=5"
+        with http_get(url, "application/atom+xml") as r:
+            root = ET.fromstring(r.read())
+        ns = {"a": "http://www.w3.org/2005/Atom"}
+        want = _norm_tokens(title)
+        for e in root.findall("a:entry", ns):
+            got_title = (e.findtext("a:title", "", ns) or "").strip()
+            got = _norm_tokens(got_title)
+            if not got:
+                continue
+            # exact-after-normalisation, or one title contains the other
+            # (handles "GraphCast: <journal title>"-style preprint names)
+            inter = len(want & got)
+            if want <= got or got <= want or inter / max(len(want | got), 1) >= 0.85:
+                arxiv_id = (e.findtext("a:id", "", ns) or "").rsplit("/abs/", 1)[-1]
+                if arxiv_id:
+                    return (f"https://arxiv.org/pdf/{arxiv_id}",
+                            f"arXiv PREPRINT {arxiv_id} matched by title "
+                            f"({got_title!r}) -- NOT the journal version of record")
+    except Exception as e:
+        errors.append(f"arxiv title search: {e}")
+    return None
+
+def fetch_bytes(url, accept="text/html,application/xhtml+xml,*/*"):
+    with http_get(url, accept) as r:
+        return r.read()
+
+def visible_text(raw):
+    """Strip tags/scripts/styles from HTML bytes -> plain text."""
+    t = re.sub(rb"<(script|style)[^>]*>.*?</\1>", b" ", raw, flags=re.S | re.I)
+    t = re.sub(rb"<[^>]+>", b" ", t)
+    return re.sub(rb"\s+", b" ", t).decode("utf-8", "replace").strip()
+
+FULLTEXT_MARKERS = ["references", "methods", "results", "discussion",
+                    "acknowledg", "data availability", "conclusion"]
+# Strong signals: this page itself is selling access -> never full text.
+PAYWALL_STRONG = ["access through your institution", "buy article",
+                  "buy this article", "subscribe to journal", "purchase pdf",
+                  "rent or buy", "log in via your institution",
+                  # Springer Nature wording (observed on s41586-026-10953-2):
+                  "access options", "buy or subscribe",
+                  "institutional subscriptions", "prices may be subject"]
+# Weak signals: can appear in sidebars/related-article links even on
+# genuinely open pages -> only count against short pages.
+PAYWALL_WEAK = ["get access", "purchase access", "sign in to view"]
+
+def assess_html(raw):
+    """Decide whether an HTML page carries the FULL text or just an
+    abstract/paywall stub. Returns (is_fulltext, diagnostics)."""
+    text = visible_text(raw)
+    low = text.lower()
+    markers = [m for m in FULLTEXT_MARKERS if m in low]
+    strong = [pw for pw in PAYWALL_STRONG if pw in low]
+    weak = [pw for pw in PAYWALL_WEAK if pw in low]
+    chars = len(text)
+    is_full = (chars >= 20000 and len(markers) >= 3
+               and not strong
+               and not (weak and chars < 40000))
+    return is_full, {"visible_chars": chars, "sections_found": markers,
+                     "paywall_signals": strong + weak}
+
+def html_candidates(doi, ver):
+    """Landing pages likely to carry full-text HTML, cheapest first."""
+    out = []
+    if "essoar" in doi:
+        out.append((f"https://essopenarchive.org/doi/full/{doi}/{ver or 'v1'}",
+                    "essopenarchive /doi/full/ HTML"))
+    if doi.startswith("10.1038/"):
+        out.append((f"https://www.nature.com/articles/{doi.split('/', 1)[1]}",
+                    "nature.com article HTML"))
+    if doi.startswith("10.1126/"):
+        out.append((f"https://www.science.org/doi/full/{doi}",
+                    "science.org /doi/full/ HTML"))
+    out.append((f"https://doi.org/{doi}", "DOI landing page HTML"))
+    return out
+
+def epmc_xml_candidates(doi, errors):
+    """Europe PMC full-text XML -- reliably the complete text for the OA subset."""
+    out = []
+    try:
+        q = urllib.parse.quote(f'DOI:"{doi}"')
+        j = get_json("https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+                     f"?query={q}&format=json&resultType=core&pageSize=5")
+        for r in j.get("resultList", {}).get("result", []):
+            pmcid = r.get("pmcid")
+            if pmcid and (r.get("isOpenAccess") == "Y" or r.get("inEPMC") == "Y"):
+                out.append((f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML",
+                            f"Europe PMC {pmcid} full-text XML"))
+    except Exception as e:
+        errors.append(f"europepmc xml: {e}")
+    return out
+
+def try_download(url, dest):
+    with http_get(url, "application/pdf,*/*") as r:
+        head = r.read(5)
+        if not head.startswith(b"%PDF"):
+            return None, f"not a PDF (starts {head!r}, content-type {r.headers.get('Content-Type')})"
+        with open(dest, "wb") as f:
+            f.write(head)
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+    return os.path.getsize(dest), None
+
+def verify_on_disk(path, kind="pdf"):
+    """Independent post-download check: re-read the saved file from disk and
+    prove it is real, non-trivial content of the claimed kind."""
+    st = os.stat(path)
+    with open(path, "rb") as f:
+        head = f.read(5)
+        h = hashlib.sha256(head)
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if kind == "pdf":
+        ok = head.startswith(b"%PDF") and st.st_size > 1024
+    else:  # html / xml full text
+        ok = head.lstrip()[:1] == b"<" and st.st_size > 5120
+    return ok, {
+        "verified": ok,
+        "content_kind": kind,
+        "location": os.path.abspath(path),
+        "bytes": st.st_size,
+        "size_human": f"{st.st_size / 1048576:.2f} MB",
+        "sha256": h.hexdigest(),
+        "created": datetime.fromtimestamp(getattr(st, "st_birthtime", st.st_ctime)).isoformat(timespec="seconds"),
+        "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+    }
+
+# ---------------- institutional (campus-network) access ----------------
+# NC State's campus IP ranges; publishers grant IP-authenticated subscription access here.
+NCSU_NETS = ("152.1.", "152.7.", "152.14.")
+INST_STATE = os.path.expanduser("~/.ascend/fetch-paper-institutional.json")
+INST_MIN_GAP_S, INST_MAX_PER_HOUR, INST_MAX_PER_DAY = 20, 10, 30
+
+def on_campus():
+    """True when this host is inside NC State's campus IP space (e.g. an HPC-VCL
+    node). Override with FETCH_PAPER_INSTITUTIONAL=1|0."""
+    env = os.environ.get("FETCH_PAPER_INSTITUTIONAL")
+    if env in ("1", "0"):
+        return env == "1"
+    import socket
+    host = socket.gethostname()
+    if re.search(r"^vclhpc|\.hpc\.ncsu\.edu$|^login\d*\.hpc", host, re.I):
+        return True
+    try:
+        for info in socket.getaddrinfo(host, None, socket.AF_INET):
+            if info[4][0].startswith(NCSU_NETS):
+                return True
+    except Exception:
+        pass
+    try:  # egress address; UDP connect sends nothing
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sk.connect(("8.8.8.8", 80)); ip = sk.getsockname()[0]; sk.close()
+        return ip.startswith(NCSU_NETS)
+    except Exception:
+        return False
+
+def institutional_throttle(errors):
+    """Human-pace guard for licensed publisher fetches. One paper per call is
+    inherent; this adds a minimum gap plus rolling hourly/daily caps so the tool
+    can never behave like a crawler (publisher licenses forbid systematic
+    downloading, and a violation can cut off the WHOLE campus). Counts attempts,
+    not just successes. Returns True if a fetch may proceed now."""
+    import time
+    now = time.time()
+    try:
+        with open(INST_STATE) as fh:
+            stamps = [t for t in json.load(fh) if now - t < 86400]
+    except Exception:
+        stamps = []
+    hour = [t for t in stamps if now - t < 3600]
+    if len(stamps) >= INST_MAX_PER_DAY or len(hour) >= INST_MAX_PER_HOUR:
+        errors.append(
+            f"institutional access: rate cap reached ({len(hour)}/{INST_MAX_PER_HOUR} per hour, "
+            f"{len(stamps)}/{INST_MAX_PER_DAY} per day). Licensed access is for reading specific "
+            "papers at human pace, not bulk collection. Wait, or download this one manually.")
+        return False
+    if stamps and now - max(stamps) < INST_MIN_GAP_S:
+        time.sleep(INST_MIN_GAP_S - (now - max(stamps)))
+    stamps.append(time.time())
+    try:
+        os.makedirs(os.path.dirname(INST_STATE), exist_ok=True)
+        with open(INST_STATE, "w") as fh:
+            json.dump(stamps, fh)
+    except OSError:
+        pass
+    return True
+
+def institutional_candidates(doi, errors):
+    """On a campus-IP host: resolve the DOI to the publisher landing page and read
+    the standard citation_pdf_url meta tag -- the same URL a browser's PDF button
+    uses. Exactly ONE landing-page request; no crawling or link-following."""
+    out = []
+    # Elsevier's OFFICIAL programmatic route (sanctioned, their own rate limits): the
+    # Article Retrieval API returns the full-text PDF for subscribed content when called
+    # from an entitled (campus) IP with an institutional API key. Free key: dev.elsevier.com.
+    # Opt-in only -- set ELSEVIER_API_KEY. ScienceDirect's HTML is a JS shell to scripts,
+    # so for 10.1016/* DOIs this is the path that actually works.
+    els_key = os.environ.get("ELSEVIER_API_KEY")
+    if doi.lower().startswith("10.1016/") and els_key:
+        out.append((f"https://api.elsevier.com/content/article/doi/{doi}"
+                    f"?apiKey={els_key}&httpAccept=application/pdf",
+                    "INSTITUTIONAL Elsevier Article Retrieval API (official; campus-entitled)"))
+        return out  # ScienceDirect's landing page is a JS shell to scripts -- don't bother it
+    landing = f"https://doi.org/{doi}"
+    try:
+        with http_get(landing, "text/html,application/xhtml+xml,*/*") as r:
+            final = r.geturl()
+            raw = r.read(1500000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        errors.append(f"institutional: landing page HTTP {e.code} for {landing} "
+                      "(publisher bot challenge is common even on campus -- do NOT try to "
+                      "defeat it; fall back to a manual browser download)")
+        return out
+    except Exception as e:
+        errors.append(f"institutional: landing page error: {e}")
+        return out
+    pat = (r'<meta[^>]+(?:name|property)=["\']citation_pdf_url["\'][^>]+content=["\']([^"\']+)["\']'
+           r'|<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\']citation_pdf_url["\']')
+    for m in re.finditer(pat, raw, re.I):
+        u = m.group(1) or m.group(2)
+        out.append((urllib.parse.urljoin(final, u),
+                    "INSTITUTIONAL citation_pdf_url (campus-licensed publisher PDF)"))
+    if "sciencedirect.com" in final:  # Elsevier: PII-based download link
+        m = re.search(r"/science/article/(?:abs/)?pii/([A-Z0-9]+)", final, re.I)
+        if m:
+            out.append((f"https://www.sciencedirect.com/science/article/pii/{m.group(1)}"
+                        "/pdfft?isDTMRedir=true&download=true",
+                        "INSTITUTIONAL ScienceDirect pdfft (campus-licensed)"))
+    seen, uniq = set(), []
+    for u, src in out:
+        if u not in seen:
+            seen.add(u); uniq.append((u, src))
+    if not uniq:
+        msg = ("institutional: landing page reachable but no citation_pdf_url found "
+               "(JS-rendered page or bot challenge) -- not going further; fall back to manual.")
+        if "sciencedirect.com" in final or doi.lower().startswith("10.1016/"):
+            msg += (" ScienceDirect serves scripts a JS shell (this is expected, not a block). "
+                    "Sanctioned fix: Elsevier's official Article Retrieval API -- needs "
+                    "ELSEVIER_API_KEY (dev.elsevier.com) AND 'ScienceDirect Full-Text Entitlement' "
+                    "enabled on that key by Elsevier API Support (not on by default; a key without it "
+                    "gets 403 'Requestor configuration settings insufficient'). Meanwhile: download "
+                    "in this node's own browser and --register.")
+        errors.append(msg)
+    return uniq
+
+# ---------------- local headless-Chrome render (off-campus, anonymous, OA-only) ----------------
+def find_chrome():
+    for p in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+              "/Applications/Chromium.app/Contents/MacOS/Chromium",
+              "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"):
+        if os.path.exists(p):
+            return p
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        p = shutil.which(name)
+        if p:
+            return p
+    return None
+
+def render_page(chrome, url, errors, timeout=90):
+    """Render URL once with headless Chrome in a fresh, cookie-less profile and return
+    the post-JavaScript DOM as bytes (or None). No login, no persistent state, one
+    page, no link-following -- the same view an anonymous visitor gets."""
+    prof = tempfile.mkdtemp(prefix="fetch-paper-render-")
+    cmd = [chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+           "--disable-extensions", "--disable-sync", f"--user-data-dir={prof}",
+           "--virtual-time-budget=15000", f"--user-agent={UA}", "--dump-dom", url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        raw = r.stdout
+        if r.returncode not in (0, 1) and not raw:
+            errors.append(f"render: chrome exited {r.returncode}: {r.stderr[-200:].decode('utf-8','replace').strip()}")
+            return None
+        return raw if raw and len(raw) > 2048 else None
+    except subprocess.TimeoutExpired:
+        errors.append(f"render: headless Chrome timed out after {timeout}s on {url}")
+        return None
+    except Exception as e:
+        errors.append(f"render: {e}")
+        return None
+    finally:
+        shutil.rmtree(prof, ignore_errors=True)
+
+OA_MARKERS = ("creativecommons.org/licenses", "creative commons", "open access", "cc by")
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(prog="fetch-paper", add_help=True,
+        description="Resolve a DOI or article URL to an open-access PDF and download it.")
+    ap.add_argument("ref", help="DOI or article URL")
+    ap.add_argument("--out", default=".", help="output directory (default: .)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="show candidate URLs, fetch nothing")
+    ap.add_argument("--register", metavar="FILE",
+                    help="verify and register a MANUALLY downloaded file for this "
+                         "DOI instead of fetching (same verification, provenance "
+                         "recorded as a manual download)")
+    ap.add_argument("--institutional", action="store_true",
+                    help="force campus-licensed publisher fetch (auto-detected on NC State IP hosts)")
+    ap.add_argument("--no-institutional", action="store_true",
+                    help="never use campus-licensed publisher access")
+    ap.add_argument("--no-render", action="store_true",
+                    help="never render JS-shell pages with local headless Chrome (off-campus OA fallback)")
+    ns = ap.parse_args()
+    dry, out_dir = ns.dry_run, ns.out
+
+    doi, ver = norm_doi(ns.ref)
+    result = {"ok": False, "doi": doi, "version": ver, "pdf": None,
+              "source": None, "tried": [], "errors": []}
+    if not doi:
+        result["errors"].append(f"could not extract a DOI from {ns.ref!r}")
+        print(json.dumps(result, indent=2)); sys.exit(1)
+
+    direct = candidates(doi, ver, result["tried"])
+    if ns.no_institutional:
+        inst = False; result["institutional_mode"] = "disabled (--no-institutional)"
+    elif ns.institutional or on_campus():
+        inst = True
+        result["institutional_mode"] = ("forced (--institutional)" if ns.institutional
+            else "active (campus-IP host: NC State licensed subscription access)")
+    else:
+        inst = False; result["institutional_mode"] = "off (not a campus-IP host)"
+
+    if dry:
+        result["ok"] = True
+        result["tried"] = [{"url": u, "via": s} for u, s in
+                           direct + api_candidates(doi, result["errors"])
+                           + epmc_candidates(doi, result["errors"])]
+        if inst:
+            if doi.lower().startswith("10.1016/") and os.environ.get("ELSEVIER_API_KEY"):
+                result["tried"].append({"url": f"https://api.elsevier.com/content/article/doi/{doi}?apiKey=REDACTED&httpAccept=application/pdf",
+                    "via": "INSTITUTIONAL: would use Elsevier's official Article Retrieval API (key set; not fetched in --dry-run)"})
+            elif doi.lower().startswith("10.1016/"):
+                result["tried"].append({"url": f"https://doi.org/{doi}", "via":
+                    "INSTITUTIONAL: Elsevier DOI but no ELSEVIER_API_KEY -- landing page is a JS shell to scripts; "
+                    "set a free institutional key from dev.elsevier.com to enable the official API route"})
+            else:
+                result["tried"].append({"url": f"https://doi.org/{doi}", "via":
+                    "INSTITUTIONAL: would resolve landing page -> citation_pdf_url (not fetched in --dry-run)"})
+        ch = None if (inst or ns.no_render) else find_chrome()
+        result["render_fallback"] = (f"available (off-campus, anonymous headless Chrome: {ch})" if ch else
+                                     ("disabled on campus (use institutional route / manual)" if inst else
+                                      "unavailable (no local Chrome found)" if not ns.no_render else "disabled (--no-render)"))
+        print(json.dumps(result, indent=2)); sys.exit(0)
+
+    os.makedirs(out_dir, exist_ok=True)
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", doi + (f"_{ver}" if ver else ""))
+    dest = os.path.join(out_dir, base + ".pdf")
+    result["content_kind"] = "pdf"
+
+    if ns.register:
+        src_path = ns.register
+        if not os.path.isfile(src_path):
+            result["errors"].append(f"--register: no such file: {src_path}")
+            result["content_kind"] = None
+            print(json.dumps(result, indent=2)); sys.exit(1)
+        with open(src_path, "rb") as f:
+            head = f.read(5)
+        if head.startswith(b"%PDF"):
+            kind, ext = "pdf", ".pdf"
+        elif head.lstrip()[:1] == b"<":
+            kind, ext = "html_fulltext", ".html"
+        else:
+            result["errors"].append(
+                f"--register: {src_path} is neither a PDF nor HTML "
+                f"(starts {head!r}) -- refusing to register it as the paper.")
+            result["content_kind"] = None
+            print(json.dumps(result, indent=2)); sys.exit(1)
+        dest = os.path.join(out_dir, base + ext)
+        if os.path.abspath(src_path) != os.path.abspath(dest):
+            shutil.copy2(src_path, dest)
+        result.update(ok=True, content_kind=kind,
+                      source=f"MANUAL download registered by user (from {src_path})",
+                      registered_from=os.path.abspath(src_path))
+        result["tried"].append({"url": None, "via": result["source"],
+                                "bytes": os.path.getsize(dest)})
+
+    def attempt(url, src):
+        rec = {"url": re.sub(r"apiKey=[^&]+", "apiKey=REDACTED", url), "via": src}
+        try:
+            size, err = try_download(url, dest)
+            if size:
+                rec["bytes"] = size
+                result["tried"].append(rec)
+                result.update(ok=True, pdf=os.path.abspath(dest), source=src)
+                return True
+            rec["error"] = err
+        except urllib.error.HTTPError as e:
+            rec["error"] = f"HTTP {e.code}"
+            try:  # publishers/APIs put the real reason in the body (e.g. Elsevier AUTHORIZATION_ERROR)
+                body = e.read(2000).decode("utf-8", "replace")
+                body = re.sub(r"apiKey=[^&\s\"']+", "apiKey=REDACTED", body)
+                rec["error_body"] = re.sub(r"\s+", " ", body).strip()[:400]
+            except Exception:
+                pass
+        except Exception as e:
+            rec["error"] = str(e)
+        result["tried"].append(rec)
+        return False
+
+    for url, src in ([] if ns.register else direct):
+        if attempt(url, src):
+            break
+    if not result["ok"] and not ns.register:  # APIs only when no direct pattern delivered
+        for url, src in api_candidates(doi, result["errors"]):
+            if attempt(url, src):
+                break
+
+    if not result["ok"] and not ns.register and inst:  # campus-licensed publisher copy (version of record)
+        if institutional_throttle(result["errors"]):
+            for url, src in institutional_candidates(doi, result["errors"]):
+                if attempt(url, src):
+                    result["institutional_access"] = True
+                    result["license_note"] = (
+                        "Retrieved via NC State institutional (campus-IP) subscription access, for "
+                        "the requesting researcher's own reading/analysis of THIS paper. Do not "
+                        "redistribute, bulk-collect, or feed into TDM/training pipelines -- publisher "
+                        "licenses forbid systematic downloading; violations can cut off campus-wide access.")
+                    break
+
+    if not result["ok"] and not ns.register:  # Europe PMC: OA repository copies / author manuscripts
+        for url, src in epmc_candidates(doi, result["errors"]):
+            if attempt(url, src):
+                break
+
+    if not result["ok"] and not ns.register:  # last resort: find a preprint by title on arXiv
+        title = get_title(doi, result["errors"])
+        if title:
+            result["title"] = title
+            hit = arxiv_by_title(title, result["errors"])
+            if hit:
+                url, src = hit
+                if attempt(url, src):
+                    result["note"] = ("This is a PREPRINT located by title match, not the "
+                                      "journal version of record. Record the arXiv version "
+                                      "in the claims ledger, and check for differences from "
+                                      "the published version before relying on figures/numbers.")
+
+    if not result["ok"] and not ns.register:  # no PDF anywhere -- fall back to FULL-TEXT HTML/XML
+        for url, src in epmc_xml_candidates(doi, result["errors"]):
+            rec = {"url": url, "via": src}
+            try:
+                raw = fetch_bytes(url, "application/xml,*/*")
+                if raw.lstrip()[:1] == b"<" and len(raw) > 5120:
+                    dest = os.path.join(out_dir, base + ".xml")
+                    with open(dest, "wb") as f:
+                        f.write(raw)
+                    rec["bytes"] = len(raw)
+                    result["tried"].append(rec)
+                    result.update(ok=True, file=os.path.abspath(dest), source=src,
+                                  content_kind="xml_fulltext")
+                    break
+                rec["error"] = "response too small or not XML"
+            except urllib.error.HTTPError as e:
+                rec["error"] = f"HTTP {e.code}"
+            except Exception as e:
+                rec["error"] = str(e)
+            result["tried"].append(rec)
+
+    if not result["ok"] and not ns.register:
+        for url, src in html_candidates(doi, ver):
+            rec = {"url": url, "via": src}
+            try:
+                raw = fetch_bytes(url)
+                full, diag = assess_html(raw)
+                rec["html_assessment"] = diag
+                if full:
+                    dest = os.path.join(out_dir, base + ".html")
+                    with open(dest, "wb") as f:
+                        f.write(raw)
+                    rec["bytes"] = len(raw)
+                    result["tried"].append(rec)
+                    result.update(ok=True, file=os.path.abspath(dest), source=src,
+                                  content_kind="html_fulltext")
+                    break
+                rec["error"] = ("HTML reachable but looks abstract-only/paywalled, "
+                                "NOT saved (would poison a reproduction)")
+            except urllib.error.HTTPError as e:
+                rec["error"] = f"HTTP {e.code}"
+            except Exception as e:
+                rec["error"] = str(e)
+            result["tried"].append(rec)
+
+    if not result["ok"] and not ns.register and not inst and not ns.no_render:
+        # Off-campus only: an anonymous headless render can only see what any visitor sees
+        # (open-access content), so it cannot touch subscription material. One page, no login.
+        chrome = find_chrome()
+        if chrome:
+            for url, src in [(f"https://doi.org/{doi}", "DOI landing page")] + list(html_candidates(doi, ver)):
+                rec = {"url": url, "via": f"RENDERED locally with headless Chrome (anonymous, off-campus): {src}"}
+                raw = render_page(chrome, url, result["errors"])
+                if not raw:
+                    rec["error"] = "render produced no usable DOM"; result["tried"].append(rec); continue
+                full, diag = assess_html(raw)
+                rec["html_assessment"] = diag
+                low = raw.decode("utf-8", "replace").lower()
+                oa = [m for m in OA_MARKERS if m in low]
+                if full:
+                    dest = os.path.join(out_dir, base + ".html")
+                    with open(dest, "wb") as fh:
+                        fh.write(raw)
+                    txt = os.path.join(out_dir, base + ".txt")
+                    try:
+                        with open(txt, "w", encoding="utf-8") as fh:
+                            fh.write(visible_text(raw))
+                        result["text_file"] = os.path.abspath(txt)
+                    except Exception:
+                        pass
+                    rec["bytes"] = len(raw)
+                    result["tried"].append(rec)
+                    result.update(ok=True, file=os.path.abspath(dest), source=rec["via"],
+                                  content_kind="html_fulltext", rendered_with=chrome,
+                                  license_markers=oa or None)
+                    if oa:
+                        result["note"] = ("Page carries open-access/Creative Commons markers "
+                                          f"({', '.join(oa)}) -- OA content that the OA indexes had not "
+                                          "yet catalogued (common for papers only days old).")
+                    else:
+                        result["note"] = ("Rendered anonymously off-campus, so this is publicly visible "
+                                          "content; no OA/CC marker was detected, so double-check the "
+                                          "licence before redistributing anything from it.")
+                    break
+                rec["error"] = ("rendered page is still abstract-only/paywalled -- NOT saved "
+                                "(anonymous off-campus render cannot and must not reach subscription full text)")
+                result["tried"].append(rec)
+                break  # one render per paper is the budget; don't hammer the publisher
+
+    if result["ok"]:
+        try:
+            good, rec = verify_on_disk(dest, result.get("content_kind", "pdf"))
+            result["verification"] = rec
+            kind = result.get("content_kind", "pdf")
+            label = {"pdf": "PDF",
+                     "html_fulltext": ("FULL-TEXT HTML rendered locally with headless Chrome (no PDF was available)"
+                                       if result.get("rendered_with") else "FULL-TEXT HTML (no PDF was available)"),
+                     "xml_fulltext": "FULL-TEXT XML (Europe PMC; no PDF was available)"}[kind]
+            if ns.register:
+                label += " [MANUALLY DOWNLOADED BY USER, registered + verified]"
+            if good:
+                if kind == "pdf":
+                    result["file"] = rec["location"]
+                else:
+                    result["pdf"] = None
+                result["message"] = (
+                    f"VERIFIED: {label} saved at {rec['location']} "
+                    f"({rec['bytes']} bytes, {rec['size_human']}), created {rec['created']}, "
+                    f"sha256 {rec['sha256'][:12]}...")
+            else:
+                result["ok"] = False
+                result["errors"].append(
+                    f"post-download verification FAILED: file on disk is not valid {label} "
+                    "or is suspiciously small -- do not pass it to hpcrepro.")
+        except OSError as e:
+            result["ok"] = False
+            result["verification"] = {"verified": False}
+            result["errors"].append(f"post-download verification FAILED: {e}")
+
+    if not result["ok"]:
+        api_404s = sum(1 for e in result["errors"] if "404" in e)
+        if api_404s >= 2:
+            result["errors"].append(
+                "DOI not yet indexed by OpenAlex/Unpaywall/Crossref -- normal for a "
+                "preprint only days old; the APIs usually catch up within weeks. "
+                "Retrying later may succeed without any manual step.")
+        got_html = any("not a PDF" in (t.get("error") or "") for t in result["tried"])
+        got_403 = any("403" in (t.get("error") or "") for t in result["tried"])
+        if got_html and not got_403:
+            result["errors"].append(
+                "no candidate produced a verified PDF, and no reachable HTML page carried "
+                "the full text -- the paper is most likely PAYWALLED and no open-access "
+                "copy (repository or preprint) was found. Do not hunt for mirrors. "
+                "Options: institutional library access in a browser, the publisher's "
+                "SharedIt/rdcu.be link, or emailing an author -- then copy the PDF to "
+                "the cluster and pass the local path to hpcrepro.")
+        else:
+            result["errors"].append(
+                "no candidate produced a verified PDF. Direct route was likely bot-blocked "
+                "(Cloudflare 403 or a JS-only page). Fallback: "
+                + ("open the article in THIS node's own browser, save the PDF here, then "
+                   "--register it (see user_action)." if inst else
+                   "open the article in a real browser, download the PDF manually, copy it "
+                   "to this machine, and --register it (see user_action)."))
+        result["content_kind"] = None
+        landing = f"https://doi.org/{doi}"
+        want = os.path.join(os.path.abspath(out_dir), base + ".pdf")
+        reg = f"fetch-paper {doi} --register {want} --out {os.path.abspath(out_dir)}"
+        if inst:  # campus node with a desktop: download IN PLACE, no copy step
+            result["user_action"] = {
+                "needed": "MANUAL DOWNLOAD -- the harness cannot fetch this paper itself",
+                "step_1": f"This node is on the campus network and has a desktop (RDP): open "
+                          f"{landing} in the NODE'S OWN browser (Firefox) -- it has full "
+                          f"institutional access -- and save the PDF directly as {want}. "
+                          "No copy step is needed; /share is already mounted here.",
+                "step_2": f"Then register it so it is verified and recorded: {reg}",
+                "step_3": "(none)",
+            }
+        else:
+            result["user_action"] = {
+                "needed": "MANUAL DOWNLOAD -- the harness cannot fetch this paper itself",
+                "step_1": f"On your own computer, open {landing} in a browser "
+                          "(institutional/library access may be required) and download the PDF.",
+                "step_2": f"Copy it to this machine, e.g.: scp <downloaded.pdf> "
+                          f"<how-you-reach-this-host, e.g. hazel-vcl or <user>@login.ncshare.org>:{want}",
+                "step_3": f"Then register it so it is verified and recorded: {reg}",
+                "note": "The registered file goes through the same verification (magic bytes, "
+                        "sha256, timestamps) as an automated fetch, and its provenance is "
+                        "recorded as a manual download.",
+            }
+        if not inst:
+            result["user_action"]["alternative"] = (
+                "This host is off the campus network. Two options: (a) run the same fetch-paper "
+                "on an NC State HPC-VCL node (e.g. vclhpc10) -- inside the campus IP range the "
+                "publisher grants subscription access; or (b) use the browser fallback here on the "
+                "Mac:  paper-grab " + doi + "  -- it drives your logged-in Chrome to download the "
+                "PDF (one paper, human clears any cookie/Duo prompt) and syncs+registers it on the "
+                "cluster. Run 'paper-grab --login' once first to sign into NCSU Libraries.")
+    print(json.dumps(result, indent=2))
+    sys.exit(0 if result["ok"] else 1)
+
+if __name__ == "__main__":
+    main()

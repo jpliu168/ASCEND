@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# hurricane-tunnel — local port forward so GUI SFTP/SCP apps (which ignore
+# ~/.ssh/config and can't ProxyJump) can reach hurricane from off campus.
+#
+#   hurricane-tunnel [port]     # default port 2222; Ctrl-C to stop
+#
+# Then point the app at:  SFTP  ·  host localhost  ·  port 2222  ·  user <your
+# hurricane username> (printed below; taken from your ~/.ssh/config alias).
+# (your hurricane ssh key authenticates as usual). Rides the ssh config's
+# hurricane alias, so it works on campus, on VPN, and off campus (jump).
+set -Eeuo pipefail
+PORT="${1:-2222}"
+echo "Forwarding localhost:$PORT -> hurricane:22  (Ctrl-C to stop)"
+HUSER="$(ssh -G hurricane 2>/dev/null | awk '/^user /{print $2; exit}')"
+echo "Point your SFTP app at: host=localhost  port=$PORT  user=${HUSER:-<your hurricane username>}"
+exec ssh -N -L "$PORT:localhost:22" hurricane

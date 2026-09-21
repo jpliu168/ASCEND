@@ -1,0 +1,4 @@
+*.sh text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+bin/* text eol=lf

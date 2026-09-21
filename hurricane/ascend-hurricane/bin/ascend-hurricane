@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# ASCEND-HURRICANE — launch Claude Code ON the MEAS Lenovo GPU box (hurricane)
+# from the Mac. The agent runs on the box (GPU is local, no scheduler); this
+# script is just the door.
+#
+#   ascend-hurricane                 # start in ~/agents/projects-hurricane on the box
+#   ascend-hurricane -d ~/agents/myproj   # start in a specific project (box path)
+#   ascend-hurricane --tmux          # run inside tmux on the box (survives disconnects)
+#   ascend-hurricane --check         # test link + claude + GPU and exit
+#
+# Needs the "hurricane" ssh alias (ControlMaster + key auth = passwordless).
+# Written for macOS bash 3.2.
+set -Eeuo pipefail
+
+SRC="$0"
+while [ -h "$SRC" ]; do
+  D="$(cd "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  case "$SRC" in /*) ;; *) SRC="$D/$SRC" ;; esac
+done
+BUNDLE="$(cd "$(dirname "$SRC")/.." && pwd)"
+REMOTE="${HURRICANE_REMOTE:-hurricane}"
+WORKDIR="${ASCEND_HURRICANE_PROJECT_DIR:-}"
+CHECK=0
+TMUX=0
+ARGS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) WORKDIR="$2"; shift 2 ;;
+    --check) CHECK=1; shift ;;
+    --tmux) TMUX=1; shift ;;
+    -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --) shift; while [ $# -gt 0 ]; do ARGS[${#ARGS[@]}]="$1"; shift; done ;;
+    *) ARGS[${#ARGS[@]}]="$1"; shift ;;
+  esac
+done
+
+b()  { printf '\033[38;5;31m%s\033[0m\n' "$*"; }
+dim(){ printf '\033[38;5;245m%s\033[0m\n' "$*"; }
+
+# Reachability (key auth = should be passwordless; ControlMaster reused if warm).
+# Off campus without VPN the direct alias doesn't even resolve; fall back to
+# hurricane-jump (ProxyJump via hazel-vcl) if that alias exists and its jump
+# socket is warm.
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE" true 2>/dev/null; then
+  if [ "$REMOTE" = "hurricane" ] && ssh -G hurricane-jump >/dev/null 2>&1 \
+     && ssh -o BatchMode=yes -o ConnectTimeout=15 hurricane-jump true 2>/dev/null; then
+    REMOTE="hurricane-jump"
+    dim "    direct link unreachable (off campus, no VPN?) — routing via hazel-vcl (hurricane-jump)"
+  elif [ "$REMOTE" = "hurricane" ] && ssh -G hurricane-jump >/dev/null 2>&1; then
+    echo "cannot reach 'hurricane' directly, and 'hurricane-jump' is not warm." >&2
+    echo "  Warm the jump once (one password+Duo, then 8 h of reuse):" >&2
+    echo "    ssh hazel-vcl true" >&2
+    echo "  then re-run ascend-hurricane. (Or connect the campus VPN for the direct path.)" >&2
+    exit 1
+  else
+    echo "cannot reach '$REMOTE' non-interactively." >&2
+    echo "  Check the alias and key:  ssh $REMOTE true   (should return with no password)" >&2
+    echo "  If it asks for a password, run:  ssh-copy-id $REMOTE" >&2
+    exit 1
+  fi
+fi
+
+# Resolve the box-side working dir if not given (uses the box's $ASCEND_SCRATCH).
+if [ -z "$WORKDIR" ]; then
+  WORKDIR="$(ssh "$REMOTE" 'echo "${ASCEND_SCRATCH:-$HOME/agents}/projects-hurricane"' 2>/dev/null)"
+  [ -n "$WORKDIR" ] || WORKDIR="\$HOME/agents/projects-hurricane"
+fi
+
+if [ "$CHECK" = "1" ]; then
+  # Run through a LOGIN shell so ~/.local/bin (claude) and ~/bin are on PATH.
+  RC='''hostname; grep -h PRETTY /etc/os-release 2>/dev/null; command -v claude >/dev/null && claude --version || echo "claude: NOT on PATH"; nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv,noheader 2>/dev/null || echo "nvidia-smi: none"; curl -sI --max-time 5 https://api.anthropic.com >/dev/null && echo "anthropic api: reachable" || echo "anthropic api: UNREACHABLE"; command -v tmux >/dev/null && echo "tmux: present" || echo "tmux: absent"; echo OK'''
+  ssh "$REMOTE" "bash -lc $(printf '%q' "$RC")"
+  exit 0
+fi
+
+printf '\033]0;WOLFPACK ASCEND-HURRICANE — %s\007' "${WORKDIR##*/}"
+echo
+b '    WOLFPACK'
+b '    ▄▀█ █▀ █▀▀ █▀▀ █▄░█ █▀▄ ▄▄ █░█ █░█ █▀█ █▀█ █ █▀▀ ▄▀█ █▄░█ █▀▀'
+b '    █▀█ ▄█ █▄▄ ██▄ █░▀█ █▄▀ ░░ █▀█ █▄█ █▀▄ █▀▄ █ █▄▄ █▀█ █░▀█ ██▄'
+echo
+printf '    \033[1mNC State AI-powered Automation Scientific Computing and Discovery System\033[0m\n'
+dim "    Autonomous Scientific Computing Engine for Novel Discovery"
+echo
+dim "    box      hurricane (MEAS Lenovo · RTX PRO 6000 Blackwell, 98 GB, 1 GPU)"
+dim "    workdir  $WORKDIR  (on the box)"
+dim "    agent    Claude Code runs ON the box — GPU is local, NO scheduler"
+dim "    share    one GPU, shared: check 'nvidia-smi' before heavy runs"
+dim "    tools    ~/bin: hpcrun · hpcrepro · fetch-paper · skill: gpu-local"
+echo
+dim "    MEAS     cite the Lenovo server in publications; log usage each semester"
+dim "    Developed by NC State AI Hub for Science and OIT Advanced Computing team"
+dim "    contact   Dr. Paul Liu: jpliu@ncsu.edu, or Andrew Petersen: aapeters@ncsu.edu"
+echo
+
+# Seed AGENTS.md on the box if this project doesn't have one.
+if ! ssh "$REMOTE" "test -f '$WORKDIR/AGENTS.md' || test -f '$WORKDIR/CLAUDE.md'"; then
+  ssh "$REMOTE" "mkdir -p '$WORKDIR'"
+  ssh "$REMOTE" "cat > '$WORKDIR/AGENTS.md'" < "$BUNDLE/AGENTS-template.md"
+  dim "    (added AGENTS.md to this project on the box from the ascend-hurricane template)"
+fi
+
+# Ship the remote command base64-encoded so no quoting layer mangles it; run
+# via a LOGIN shell so ~/.local/bin (claude) and the token in ~/.bashrc load.
+CLAUDE_ARGS=""
+[ ${#ARGS[@]} -gt 0 ] && CLAUDE_ARGS=" ${ARGS[*]}"
+INNER="cd '$WORKDIR' && exec claude$CLAUDE_ARGS"
+if [ "$TMUX" = "1" ]; then
+  PAYLOAD="if command -v tmux >/dev/null 2>&1; then exec tmux new -A -s ascend-hurricane -c '$WORKDIR' \"bash -lc \\\"$INNER\\\"\"; else $INNER; fi"
+else
+  PAYLOAD="$INNER"
+fi
+B64=$(printf '%s' "$PAYLOAD" | LC_ALL=C base64 | tr -d '\n')
+exec ssh -t "$REMOTE" "bash -lc 'eval \"\$(printf %s $B64 | base64 -d)\"'"

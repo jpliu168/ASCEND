@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Start Claude Code inside a small Slurm allocation.
+#
+# Claude Code hangs on the NCShare login node (starts, makes no network calls,
+# parks on a futex forever) but runs correctly on a compute node. This grabs a
+# modest CPU allocation and launches Claude there. sbatch works from inside the
+# allocation, so hpcrun can still submit GPU jobs normally.
+#
+#   claude-node                 # 4 h, 2 cpus, 8 GB on `common`
+#   claude-node -t 08:00:00     # longer session
+#   claude-node -p interactive  # 1 h cap, higher priority
+#
+set -Eeuo pipefail
+
+PART="${ASCEND_INTERACTIVE_PARTITION:-${ASCEND_PARTITION:-common}}"
+QOS="${ASCEND_INTERACTIVE_QOS:-}"
+TIME="${ASCEND_TIME:-04:00:00}"
+CPUS=2
+MEM="8G"
+ME="${USER:-$(id -un)}"
+WORKDIR="${HPCRUN_PROJECT_DIR:-${ASCEND_SCRATCH:-/work/$ME}}"
+
+usage() {
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  echo
+  echo "Options: -p PARTITION  -t WALLTIME  -c CPUS  -m MEM  -d WORKDIR"
+  exit 0
+}
+
+while getopts "p:t:c:m:d:h" o; do
+  case "$o" in
+    p) PART=$OPTARG ;; t) TIME=$OPTARG ;; c) CPUS=$OPTARG ;;
+    m) MEM=$OPTARG ;;  d) WORKDIR=$OPTARG ;; h) usage ;;
+    *) usage ;;
+  esac
+done
+
+# Refuse to nest: srun inside an existing allocation fails with
+# "Job step creation temporarily disabled".
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+  echo "You are already inside allocation $SLURM_JOB_ID on $(hostname)." >&2
+  echo "Just run 'claude' directly -- do not nest srun." >&2
+  exit 1
+fi
+
+command -v claude >/dev/null || {
+  echo "claude is not on PATH. Add: export PATH=\"\$HOME/.npm-global/bin:\$PATH\"" >&2
+  exit 1
+}
+if [ ! -d "$WORKDIR" ]; then
+  echo "creating workdir: $WORKDIR"
+  mkdir -p "$WORKDIR" || { echo "cannot create workdir: $WORKDIR" >&2; exit 1; }
+fi
+
+# Auth. A Pro/Max subscription covers Claude Code and is the cheaper path;
+# ANTHROPIC_API_KEY outranks it in Claude Code's precedence order, so having
+# both set means paying per token on top of a plan you already have.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -r "$HOME/.config/anthropic/oauth-token" ]; then
+  CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.config/anthropic/oauth-token")"
+  export CLAUDE_CODE_OAUTH_TOKEN
+fi
+if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "warning: both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are set." >&2
+  echo "         The API key wins, so this session bills per token despite" >&2
+  echo "         your subscription. Unset ANTHROPIC_API_KEY to use the plan." >&2
+elif [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "warning: no credential found (neither CLAUDE_CODE_OAUTH_TOKEN nor" >&2
+  echo "         ANTHROPIC_API_KEY). Run 'claude setup-token' on a machine" >&2
+  echo "         with a browser, or see install.sh for the API-key route." >&2
+fi
+
+echo "==> allocation: -p $PART -c $CPUS --mem=$MEM -t $TIME"
+echo "==> workdir   : $WORKDIR"
+echo "==> the session ends when the walltime expires; work is saved as you go."
+
+exec srun --partition="$PART" ${QOS:+--qos="$QOS"} --ntasks=1 --cpus-per-task="$CPUS" \
+     --mem="$MEM" --time="$TIME" --job-name=claude-code --pty \
+     bash -lc "cd $(printf '%q' "$WORKDIR") && exec claude $(printf '%q ' "$@")"

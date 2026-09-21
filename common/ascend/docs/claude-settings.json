@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "auto",
+
+    "allow": [
+      "Read", "Edit", "Write", "Glob", "Grep", "TodoWrite", "Task",
+      "WebSearch", "WebFetch",
+
+      "Bash(hpcrun:*)", "Bash(hpcrepro:*)",
+
+      "Bash(git:*)",
+
+      "Bash(squeue:*)", "Bash(sacct:*)", "Bash(sinfo:*)", "Bash(sacctmgr:*)",
+      "Bash(scontrol show:*)", "Bash(sprio:*)", "Bash(sshare:*)",
+
+      "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)",
+      "Bash(wc:*)", "Bash(stat:*)", "Bash(file:*)", "Bash(du:*)", "Bash(df:*)",
+      "Bash(find:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(diff:*)",
+      "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(awk:*)", "Bash(sed:*)",
+      "Bash(realpath:*)", "Bash(basename:*)", "Bash(dirname:*)", "Bash(readlink:*)",
+      "Bash(date:*)", "Bash(hostname:*)", "Bash(whoami:*)", "Bash(id:*)",
+      "Bash(echo:*)", "Bash(printf:*)", "Bash(env:*)", "Bash(which:*)",
+      "Bash(nvidia-smi:*)", "Bash(free:*)", "Bash(uptime:*)", "Bash(ps:*)",
+      "Bash(quota:*)", "Bash(lfs quota:*)",
+
+      "Bash(cd:*)", "Bash(mkdir:*)", "Bash(touch:*)", "Bash(cp:*)",
+      "Bash(mv:*)", "Bash(chmod:*)", "Bash(tar:*)", "Bash(gzip:*)",
+      "Bash(gunzip:*)", "Bash(unzip:*)", "Bash(ln:*)",
+
+      "Bash(python3:*)", "Bash(python:*)", "Bash(jq:*)", "Bash(bash:*)",
+      "Bash(source:*)", "Bash(export:*)",
+
+      "Bash(pip:*)", "Bash(pip3:*)", "Bash(conda:*)", "Bash(mamba:*)",
+      "Bash(uv:*)", "Bash(poetry:*)", "Bash(npm:*)",
+
+      "Bash(curl:*)", "Bash(wget:*)", "Bash(gsutil:*)", "Bash(gcloud:*)",
+      "Bash(aws:*)", "Bash(rclone:*)", "Bash(huggingface-cli:*)"
+    ],
+
+    "ask": [
+      "Bash(rm:*)", "Bash(rmdir:*)",
+      "Bash(git push:*)", "Bash(git reset:*)", "Bash(git clean:*)"
+    ],
+
+    "deny": [
+      "Bash(sbatch:*)", "Bash(scancel:*)", "Bash(srun:*)", "Bash(salloc:*)",
+      "Bash(sudo:*)", "Bash(su:*)", "Bash(chown:*)",
+      "Read(./.config/anthropic/**)", "Read(./.ssh/**)",
+      "Read(./.aws/**)", "Read(./.netrc)", "Read(./.cdsapirc)"
+    ]
+  }
+}

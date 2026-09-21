@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.bak
+*.orig
+dist/
+*.zip
+*.tar.gz
+_to_delete/
+.claude/settings.local.json

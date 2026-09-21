@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""ascend-probe — a live snapshot of what's available RIGHT NOW across the three
+ASCEND resources, so the router can pick one. Read-only; nothing is submitted.
+
+  ascend-probe            human-readable table
+  ascend-probe --json     machine-readable JSON (used by ascend-all)
+
+Probes:
+  hurricane  passwordless nvidia-smi  -> is the one Blackwell GPU free now?
+  ncshare    login-node sinfo/squeue  -> idle GPU nodes + your queue depth
+  hazel      sinfo/squeue IF a link is warm (hazel or hazel-vcl); otherwise "cold (needs Duo)"
+
+Overrides (env): HURRICANE_REMOTE, ASCEND_NCSHARE_LOGIN (e.g. <user>@login.ncshare.org),
+HAZEL_REMOTE. Stdlib only.
+"""
+import json, os, subprocess, sys, concurrent.futures as cf
+
+HURRICANE = os.environ.get("HURRICANE_REMOTE", "hurricane")
+def _ncshare_login():
+    """NCShare login for the read-only probe: env override, else the User from
+    the ncshare-agent block in ~/.ssh/config (written by ncshare/setup.sh)."""
+    env = os.environ.get("ASCEND_NCSHARE_LOGIN")
+    if env:
+        return env
+    try:
+        user, inblk = None, False
+        for ln in open(os.path.expanduser("~/.ssh/config")):
+            t = ln.split()
+            if not t:
+                continue
+            if t[0] == "Host":
+                inblk = (len(t) > 1 and t[1] == "ncshare-agent")
+            elif inblk and t[0] == "User" and len(t) > 1:
+                user = t[1]
+                break
+        return f"{user}@login.ncshare.org" if user else None
+    except OSError:
+        return None
+
+NCLOGIN   = _ncshare_login()
+HAZEL     = os.environ.get("HAZEL_REMOTE", "hazel")   # login-node alias; hazel-vcl is the fallback
+SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=accept-new"]
+
+
+def run(args, timeout=15):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout"
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def probe_hurricane():
+    r = {"resource": "hurricane", "kind": "single-gpu, no scheduler", "reachable": False,
+         "free_now": False, "note": ""}
+    q = ("nvidia-smi --query-gpu=name,memory.total,memory.used,utilization.gpu "
+         "--format=csv,noheader,nounits")
+    rc, out, err = run(SSH + [HURRICANE, q])
+    via = ""
+    if (rc != 0 or not out) and HURRICANE == "hurricane":
+        # off campus without VPN the direct alias doesn't resolve; try the
+        # ProxyJump alias (rides the warm hazel-vcl socket)
+        rc2, out2, err2 = run(SSH + ["hurricane-jump", q], timeout=25)
+        if rc2 == 0 and out2:
+            rc, out, err, via = rc2, out2, err2, " (via hazel-vcl jump)"
+    if rc != 0 or not out:
+        r["note"] = "unreachable (" + (err or "no gpu data")[:60] + ")"
+        return r
+    r["reachable"] = True
+    # take GPU 0 (the only one)
+    name, tot, used, util = [x.strip() for x in out.splitlines()[0].split(",")]
+    tot, used, util = float(tot), float(used), float(util)
+    free = tot - used
+    r.update({"gpu": name, "vram_total_gb": round(tot/1024, 1),
+              "vram_free_gb": round(free/1024, 1), "util_pct": util})
+    # "free now" = most of the card and little utilization
+    r["free_now"] = (free/tot > 0.6) and (util < 25)
+    r["note"] = ("GPU idle, %.0f GB free" % (free/1024) if r["free_now"]
+                 else "GPU busy (%.0f%% util, %.0f GB used)" % (util, used/1024)) + via
+    return r
+
+
+def probe_ncshare():
+    r = {"resource": "ncshare", "kind": "Slurm cluster (H200), laptop-driven",
+         "reachable": False, "free_now": False, "note": ""}
+    if not NCLOGIN:
+        r["note"] = "not configured (no ncshare-agent alias; set ASCEND_NCSHARE_LOGIN to probe)"
+        return r
+    rc, out, err = run(SSH + [NCLOGIN,
+        "sinfo -h -o '%P %a %D %t' 2>/dev/null | grep -iE 'gpu' ; "
+        "echo '::'; squeue -h -u \"$USER\" 2>/dev/null | wc -l"])
+    if rc != 0:
+        r["note"] = "login-node probe unavailable (no passwordless login ssh?); reachable for compute via ncshare-agent"
+        r["reachable"] = True   # compute still works via the proxy alias
+        return r
+    r["reachable"] = True
+    part, _, queued = out.partition("::")
+    idle = sum(1 for ln in part.splitlines()
+               if ln.strip() and ln.split()[-1].startswith(("idle", "mix")))
+    qd = queued.strip() or "0"
+    r["gpu_nodes_idle_or_mixed"] = idle
+    r["your_queue"] = qd
+    r["free_now"] = idle > 0
+    r["note"] = ("%d GPU node(s) idle/mixed, your queue=%s" % (idle, qd) if idle
+                 else "GPU nodes busy; your queue=%s (jobs will wait)" % qd)
+    return r
+
+
+def probe_hazel():
+    r = {"resource": "hazel", "kind": "Slurm cluster (typed GPUs)",
+         "reachable": False, "warm": False, "free_now": False, "note": ""}
+    alias = None
+    for a in (HAZEL, "hazel", "hazel-vcl"):
+        rc, _, _ = run(["ssh", "-o", "BatchMode=yes", "-O", "check", a], timeout=6)
+        if rc == 0:
+            alias = a
+            break
+    if alias is None:
+        r["note"] = "link COLD — needs one password+Duo (ssh hazel, or ssh hazel-vcl) before it can be checked or used"
+        return r
+    r["warm"] = True
+    r["via"] = alias
+    rc, out, err = run(SSH + [alias,
+        "sinfo -h -o '%P %D %t' 2>/dev/null | grep -iE 'gpu' | head; "
+        "echo '::'; squeue -h -u \"$USER\" 2>/dev/null | wc -l"])
+    if rc != 0:
+        r["reachable"] = True
+        r["note"] = "warm, but sinfo/squeue failed (" + err[:40] + ")"
+        return r
+    r["reachable"] = True
+    part, _, queued = out.partition("::")
+    idle = sum(1 for ln in part.splitlines()
+               if ln.strip() and ln.split()[-1].startswith(("idle", "mix")))
+    r["gpu_nodes_idle_or_mixed"] = idle
+    r["your_queue"] = queued.strip() or "0"
+    r["free_now"] = idle > 0
+    r["note"] = "warm; %d GPU node(s) idle/mixed, your queue=%s" % (idle, r["your_queue"])
+    return r
+
+
+def main():
+    as_json = "--json" in sys.argv
+    with cf.ThreadPoolExecutor(max_workers=3) as ex:
+        futs = {ex.submit(f): n for n, f in
+                (("hurricane", probe_hurricane), ("ncshare", probe_ncshare), ("hazel", probe_hazel))}
+        res = {}
+        for fut in cf.as_completed(futs):
+            res[futs[fut]] = fut.result()
+    order = ["hurricane", "ncshare", "hazel"]
+    snap = {k: res[k] for k in order}
+    if as_json:
+        print(json.dumps(snap))
+        return
+    print("\nASCEND resource snapshot (live):\n")
+    for k in order:
+        d = snap[k]
+        flag = "AVAILABLE NOW" if d.get("free_now") else ("reachable" if d.get("reachable") else "unreachable")
+        print("  %-11s [%s]  %s" % (d["resource"], flag, d.get("note", "")))
+    print("\n  (free_now = usable immediately with no queue wait)\n")
+
+
+if __name__ == "__main__":
+    main()

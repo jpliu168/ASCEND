@@ -1,0 +1,50 @@
+{
+  "schema": "hpcrun/jobspec/1",
+  "name": "gs_full",
+  "scheduler": "slurm",
+  "account": null,
+  "partition": "gpu-hp",
+  "qos": "ncsu_h200_hp",
+  "nodes": 1,
+  "tasks_per_node": 1,
+  "cpus_per_task": 64,
+  "gpus_per_node": 8,
+  "gpu_type": "h200",
+  "mem_per_node_gb": 480,
+  "walltime_minutes": 720,
+  "workdir": "/work/<user>/regional_gs",
+  "environment": {
+    "modules": [],
+    "conda_env": "/work/<user>/regional_gs/env",
+    "conda_sh": "/hpc/home/<user>/miniforge3/etc/profile.d/conda.sh",
+    "container": null,
+    "vars": {
+      "GS_ROOT": "/work/<user>/regional_gs",
+      "OMP_NUM_THREADS": "8",
+      "NCCL_DEBUG": "WARN",
+      "TMPDIR": "/work/<user>/tmp",
+      "XDG_CACHE_HOME": "/work/<user>/regional_gs/.cache",
+      "TORCH_HOME": "/work/<user>/regional_gs/.cache/torch",
+      "PYTHONUNBUFFERED": "1",
+      "E_R2": "150",
+      "E_R3": "40",
+      "E_R4": "30",
+      "E_R5": "0",
+      "S2B_EPOCHS": "400",
+      "BATCH": "4",
+      "S2B_BATCH": "16",
+      "DIFF_BASE": "64",
+      "NPROC": "8",
+      "FRESH": "0"
+    }
+  },
+  "entrypoint": [
+    "bash",
+    "{CODEDIR}/pipeline.sh"
+  ],
+  "inputs": [],
+  "outputs": [],
+  "retry_policy": {
+    "maximum_attempts": 3
+  }
+}

@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+import os,sys
+STATE=os.environ.get("MOCKSLURM_STATE","/tmp/mockslurm")
+open(os.path.join(STATE,sys.argv[-1]+".state"),"w").write("CANCELLED")

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# ascend-hurricane (ON-BOX) — the ASCEND front door WHEN YOU ARE ALREADY ON
+# hurricane. Prints the hurricane banner, then hands off to the universal
+# `ascend` front door with --here (this box has no scheduler, so the agent runs
+# in place). Installed to ~/bin/ascend-hurricane by hurricane/deploy.sh. On the
+# Mac, `ascend-hurricane` is a different launcher that SSHes to the box; this is
+# its on-box twin so the command name is the same in both places.
+set -Eeuo pipefail
+
+b()  { printf '\033[38;5;31m%s\033[0m\n' "$*"; }
+dim(){ printf '\033[38;5;245m%s\033[0m\n' "$*"; }
+
+CCV="$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+[ -n "$CCV" ] && CCV="Claude Code v$CCV" || CCV="Claude Code not installed"
+HOST="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo hurricane)"
+GPU="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
+WORK="${ASCEND_SCRATCH:-$HOME/agents}"
+
+printf '\033]0;WOLFPACK ASCEND-HURRICANE — %s\007' "$HOST"
+echo
+b '    WOLFPACK'
+b '    ▄▀█ █▀ █▀▀ █▀▀ █▄░█ █▀▄ ▄▄ █░█ █░█ █▀█ █▀█ █ █▀▀ ▄▀█ █▄░█ █▀▀'
+b '    █▀█ ▄█ █▄▄ ██▄ █░▀█ █▄▀ ░░ █▀█ █▄█ █▀▄ █▀▄ █ █▄▄ █▀█ █░▀█ ██▄'
+echo
+printf '    \033[1mNC State AI-powered Automation Scientific Computing and Discovery System\033[0m\n'
+dim "    Autonomous Scientific Computing Engine for Novel Discovery   ($CCV)"
+echo
+dim "    box      $HOST (NC State MEAS · Lenovo Blackwell)"
+dim "    gpu      ${GPU:-RTX PRO 6000 Blackwell} — one card, shared: check nvidia-smi first"
+dim "    workdir  $WORK"
+dim "    agent    Claude Code runs ON the box — GPU is local, NO scheduler"
+dim "    tools    ~/bin: hpcrun · hpcrepro · fetch-paper · skill: gpu-local"
+dim "    MEAS     cite the Lenovo server in publications; log usage each semester"
+dim "    Developed by NC State AI Hub for Science and OIT Advanced Computing team"
+dim "    contact   Dr. Paul Liu: jpliu@ncsu.edu, or Andrew Petersen: aapeters@ncsu.edu"
+echo
+
+# Hand off to the universal front door: --here (no scheduler) + suppress its banner.
+exec env ASCEND_NO_BANNER=1 ascend --here "$@"

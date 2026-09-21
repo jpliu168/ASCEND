@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""paper-grab -- Mac-side browser fallback for fetch-paper.
+
+When fetch-paper's HTTP routes cannot get the full text (Elsevier JS shell,
+bot-blocked publisher, paywall needing institutional login), this drives a REAL
+Chrome via Playwright, using a persistent profile you log into ONCE, to open the
+paper, clear cookie/consent prompts, obtain the PDF (from the authenticated
+session), then sync it to the cluster and register it with fetch-paper.
+
+  paper-grab --login                              # one-time: open a login page, sign into NCSU library, quit
+  paper-grab 10.1016/j.margeo.2026.107879         # grab this paper -> the node's $ASCEND_SCRATCH/papers
+  paper-grab <doi> --to <user>@login.ncshare.org --dir /work/<user>/papers
+  paper-grab <doi> --local-only                   # download to ~/Downloads, don't sync/register
+  paper-grab <doi> --headless                     # no window (OA / no-login pages only)
+
+Design & limits (deliberate):
+  * HEADFUL by default and ONE paper per call -- you (or the page) complete any
+    cookie banner or Duo prompt in the window; the tool never loops a bibliography.
+  * Persistent profile at ~/.ascend/paper-grab-profile keeps your library login
+    between runs. It is YOUR authenticated session -- personal research use only,
+    no redistribution, no bulk collection (publisher licences forbid it and a
+    violation cuts off campus access).
+  * A light daily cap (default 40) guards against accidental loops.
+Requires: pip install playwright ; playwright install chromium   (or use system Chrome)
+macOS. Python 3.
+"""
+import argparse, json, os, re, subprocess, sys, time
+
+PROFILE = os.path.expanduser("~/.ascend/paper-grab-profile")
+STATE   = os.path.expanduser("~/.ascend/paper-grab-count.json")
+DAILY_CAP = 40
+COOKIE_SELECTORS = [
+    "#onetrust-accept-btn-handler",
+    "button#onetrust-accept-btn-handler",
+    'button:has-text("Accept all cookies")',
+    'button:has-text("Accept All Cookies")',
+    'button:has-text("Accept all")',
+    'button:has-text("I Accept")',
+    'button:has-text("Agree")',
+    '[aria-label="Accept cookies"]',
+]
+
+def die(msg, code=1):
+    print(json.dumps({"ok": False, "error": msg}), file=sys.stderr); sys.exit(code)
+
+def check_cap():
+    now = time.time()
+    try:
+        stamps = [t for t in json.load(open(STATE)) if now - t < 86400]
+    except Exception:
+        stamps = []
+    if len(stamps) >= DAILY_CAP:
+        die(f"paper-grab: daily cap ({DAILY_CAP}) reached -- this is for reading specific "
+            "papers, not bulk collection. Wait, or raise DAILY_CAP if you truly need to.")
+    stamps.append(now)
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    try: json.dump(stamps, open(STATE, "w"))
+    except OSError: pass
+
+def base_name(doi):
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", doi) + ".pdf"
+
+def pdf_urls_from_dom(html, page_url):
+    from urllib.parse import urljoin
+    urls = []
+    for m in re.finditer(r'<meta[^>]+citation_pdf_url["\'][^>]+content=["\']([^"\']+)', html, re.I):
+        urls.append(urljoin(page_url, m.group(1)))
+    for m in re.finditer(r'href=["\']([^"\']*?/pdfft[^"\']*)["\']', html, re.I):
+        urls.append(urljoin(page_url, m.group(1)))
+    m = re.search(r"/science/article/(?:abs/)?pii/([A-Z0-9]+)", page_url, re.I)
+    if m:
+        urls.append(f"https://www.sciencedirect.com/science/article/pii/{m.group(1)}/pdfft?download=true")
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u); out.append(u)
+    return out
+
+def grab(doi, out_path, headless):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        die("Playwright not installed. Run:  pip install playwright && playwright install chromium")
+    os.makedirs(PROFILE, exist_ok=True)
+    url = f"https://doi.org/{doi}"
+    with sync_playwright() as p:
+        # Identify honestly: real Chrome, its own user-agent, no anti-detection flags.
+        # If a publisher blocks automation we detect it and stop -- we do not evade.
+        launch = dict(user_data_dir=PROFILE, headless=headless, accept_downloads=True)
+        try:
+            ctx = p.chromium.launch_persistent_context(channel="chrome", **launch)
+        except Exception:
+            ctx = p.chromium.launch_persistent_context(**launch)  # bundled chromium
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        print(f"[paper-grab] opening {url}", file=sys.stderr)
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        for sel in COOKIE_SELECTORS:
+            try:
+                el = page.query_selector(sel)
+                if el and el.is_visible():
+                    el.click(timeout=3000); print(f"[paper-grab] dismissed cookie banner ({sel})", file=sys.stderr); break
+            except Exception:
+                pass
+        try: page.wait_for_load_state("networkidle", timeout=20000)
+        except Exception: pass
+
+        # If an institutional login is in the way, give the human time to complete it.
+        if not headless and re.search(r"login|idp|shibboleth|wayf|signin|authoriz", page.url, re.I):
+            print("[paper-grab] a login/verification page is showing -- complete it in the window "
+                  "(Unity ID + Duo). Waiting up to 180s...", file=sys.stderr)
+            try: page.wait_for_url(re.compile(r"(sciencedirect|doi\.org|/article/|/pii/)", re.I), timeout=180000)
+            except Exception: pass
+            try: page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception: pass
+
+        html = page.content()
+        low = html.lower()
+        BLOCK = ["there was a problem providing the content", "cpe00001", "reference number",
+                 "unusual traffic", "verify you are human", "are you a robot", "captcha",
+                 "access to this page has been denied", "enable javascript and cookies to continue"]
+        hits = [b for b in BLOCK if b in low]
+        if hits and "%pdf" not in low:
+            ctx.close()
+            return False, ("PUBLISHER BLOCKED THE AUTOMATED BROWSER (matched: "
+                + "; ".join(hits[:2]) + "). This publisher (e.g. Elsevier/ScienceDirect) actively "
+                "refuses browser automation -- that is a boundary to respect, not defeat. Use the "
+                "sanctioned route instead: for Elsevier, the Article Retrieval API on the campus node "
+                "(ELSEVIER_API_KEY with full-text entitlement); otherwise download the PDF BY HAND in a "
+                "browser you operate yourself, then:  paper-drop " + doi + " --file <that.pdf>  (or "
+                "fetch-paper --register) to sync+verify. Do not script around the block.")
+        # Primary: pull the PDF with the browser's authenticated cookies.
+        for u in pdf_urls_from_dom(html, page.url):
+            try:
+                print(f"[paper-grab] trying PDF url with session cookies: {u}", file=sys.stderr)
+                resp = ctx.request.get(u, timeout=60000)
+                body = resp.body()
+                if body[:5] == b"%PDF":
+                    open(out_path, "wb").write(body)
+                    ctx.close(); return True, f"session-cookie fetch of {u}"
+            except Exception as e:
+                print(f"[paper-grab]   failed: {e}", file=sys.stderr)
+        # Fallback: click a Download/View-PDF control and capture the download.
+        for sel in ['a[aria-label*="PDF" i]', 'a:has-text("Download PDF")',
+                    'a:has-text("View PDF")', 'button:has-text("Download PDF")',
+                    'a[href*="pdf" i]']:
+            try:
+                el = page.query_selector(sel)
+                if not (el and el.is_visible()): continue
+                with page.expect_download(timeout=120000) as dl:
+                    el.click()
+                d = dl.value
+                d.save_as(out_path)
+                if open(out_path, "rb").read(5) == b"%PDF":
+                    ctx.close(); return True, f"clicked {sel} and captured download"
+            except Exception:
+                pass
+        # Last resort: leave the window open so the human can click Download themselves.
+        if not headless:
+            print("[paper-grab] could not auto-capture the PDF. The window is open -- click "
+                  "Download/View PDF yourself; I'll capture the next download (120s).", file=sys.stderr)
+            try:
+                with page.expect_download(timeout=120000) as dl:
+                    pass
+                dl.value.save_as(out_path)
+                if open(out_path, "rb").read(5) == b"%PDF":
+                    ctx.close(); return True, "human clicked; download captured"
+            except Exception:
+                pass
+        ctx.close()
+        return False, "no PDF captured (headless page may need login; retry without --headless)"
+
+def sync_and_register(doi, local, to, remote_dir):
+    base = base_name(doi); dest = f"{remote_dir}/{base}"
+    if subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", to, "true"]).returncode != 0:
+        die(f"cannot reach '{to}' non-interactively -- warm it first:  ssh {to}  (password+Duo), then re-run.")
+    subprocess.run(["ssh", to, f"mkdir -p '{remote_dir}'"], check=True)
+    print(f"[paper-grab] syncing -> {to}:{dest}", file=sys.stderr)
+    subprocess.run(["rsync", "-a", local, f"{to}:{dest}"], check=True)
+    print("[paper-grab] registering on the cluster (verify + MANUAL provenance)", file=sys.stderr)
+    subprocess.run(["ssh", to, f"bash -lc \"fetch-paper '{doi}' --register '{dest}' --out '{remote_dir}'\""])
+
+def main():
+    ap = argparse.ArgumentParser(prog="paper-grab", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("doi", nargs="?", help="DOI (or doi.org URL)")
+    ap.add_argument("--login", action="store_true", help="open a page to sign into NCSU library, then quit (seeds the profile)")
+    ap.add_argument("--to", default="hazel-vcl", help="ssh alias for the cluster (default hazel-vcl)")
+    ap.add_argument("--dir", default="", help="remote papers dir (default: the node's $ASCEND_SCRATCH/papers)")
+    ap.add_argument("--out", default=os.path.expanduser("~/Downloads"), help="local download dir")
+    ap.add_argument("--local-only", action="store_true", help="download locally; do not sync/register")
+    ap.add_argument("--headless", action="store_true", help="no visible window (OA / no-login only)")
+    ns = ap.parse_args()
+
+    if ns.login:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            die("Playwright not installed. Run:  pip install playwright && playwright install chromium")
+        os.makedirs(PROFILE, exist_ok=True)
+        with sync_playwright() as p:
+            try: ctx = p.chromium.launch_persistent_context(PROFILE, channel="chrome", headless=False)
+            except Exception: ctx = p.chromium.launch_persistent_context(PROFILE, headless=False)
+            pg = ctx.pages[0] if ctx.pages else ctx.new_page()
+            pg.goto("https://www.lib.ncsu.edu/", wait_until="domcontentloaded")
+            print("Sign into NCSU Libraries (and, if you like, load a ScienceDirect article to confirm "
+                  "'Access through your institution'). Close the window when done; the login persists.", file=sys.stderr)
+            try: pg.wait_for_event("close", timeout=0)
+            except Exception: pass
+        return
+
+    if not ns.doi: die("give a DOI, or use --login first. See --help.")
+    doi = re.sub(r"^https?://(dx\.)?doi\.org/", "", ns.doi.strip()).rstrip("/.")
+    check_cap()
+    os.makedirs(ns.out, exist_ok=True)
+    local = os.path.join(ns.out, base_name(doi))
+    ok, how = grab(doi, local, ns.headless)
+    if not ok:
+        die(how, 1)
+    size = os.path.getsize(local)
+    print(f"[paper-grab] got PDF: {local} ({size} bytes) via {how}", file=sys.stderr)
+    if ns.local_only:
+        print(json.dumps({"ok": True, "pdf": local, "bytes": size, "via": how})); return
+    remote_dir = ns.dir
+    if not remote_dir:
+        try:
+            remote_dir = subprocess.check_output(['ssh', ns.to, "bash -lc 'echo ${ASCEND_SCRATCH:-/tmp}/papers'"]).decode().strip()
+        except Exception:
+            remote_dir = '/tmp/papers'
+    sync_and_register(doi, local, ns.to, remote_dir)
+    print(json.dumps({"ok": True, "pdf_local": local, "synced_to": f"{ns.to}:{ns.dir}", "via": how}))
+
+if __name__ == "__main__":
+    main()

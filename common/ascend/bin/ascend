@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# ASCEND — Autonomous Scientific Computing Engine for Novel Discovery
+#
+# The front door. Prints the banner, claims a compute node if needed, and hands
+# over to Claude Code, which does the reasoning while hpcrun and hpcrepro do the
+# acting.
+#
+#   ascend                      # 4 h, 2 cpus, 8 GB on `common`
+#   ascend -t 08:00:00          # longer session
+#   ascend -p interactive       # 1 h cap, higher priority
+#   ascend --here               # skip the allocation, run in this shell
+#
+# Claude Code hangs on the NCShare login node (starts, makes no network calls,
+# parks on a futex forever) but runs correctly on a compute node, so by default
+# this grabs a modest allocation first. sbatch works from inside an allocation,
+# so hpcrun can still submit GPU jobs normally.
+set -Eeuo pipefail
+
+PART="${ASCEND_INTERACTIVE_PARTITION:-${ASCEND_PARTITION:-common}}"
+QOS="${ASCEND_INTERACTIVE_QOS:-}"
+TIME="${ASCEND_TIME:-04:00:00}"
+CPUS=2
+MEM="8G"
+HERE="${ASCEND_HERE:-0}"
+ME="${USER:-$(id -un)}"
+WORKDIR="${HPCRUN_PROJECT_DIR:-${ASCEND_SCRATCH:-/work/$ME}}"
+
+usage() {
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  echo
+  echo "Options: -p PARTITION  -t WALLTIME  -c CPUS  -m MEM  -d WORKDIR  --here"
+  exit 0
+}
+
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -p) PART="$2"; shift 2 ;;
+    -t) TIME="$2"; shift 2 ;;
+    -c) CPUS="$2"; shift 2 ;;
+    -m) MEM="$2"; shift 2 ;;
+    -d) WORKDIR="$2"; shift 2 ;;
+    --here) HERE=1; shift ;;
+    -h|--help) usage ;;
+    --) shift; ARGS+=("$@"); break ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+
+# ------------------------------------------------------------------ banner ---
+# Claude Code has no supported way to replace its own startup banner, so this
+# one is printed above it. The status line carries the branding for the rest of
+# the session, which is the part that stays on screen.
+b()  { printf '\033[38;5;31m%s\033[0m\n' "$*"; }
+dim(){ printf '\033[38;5;245m%s\033[0m\n' "$*"; }
+
+CCV="$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+[ -n "$CCV" ] && CCV="Claude Code v$CCV" || CCV="Claude Code not installed"
+
+# A wrapper (e.g. the Hazel node-side ascend-vcl) can print its own banner and
+# set ASCEND_NO_BANNER=1 to suppress this generic one. Default: print it.
+if [ -z "${ASCEND_NO_BANNER:-}" ]; then
+printf '\033]0;ASCEND — %s\007' "${WORKDIR##*/}"   # terminal tab title
+echo
+b '    ▄▀█ █▀ █▀▀ █▀▀ █▄░█ █▀▄'
+b '    █▀█ ▄█ █▄▄ ██▄ █░▀█ █▄▀'
+echo
+printf '    \033[1mAI-powered Automation Scientific Computing and Discovery System\033[0m\n'
+dim "    Autonomous Scientific Computing Engine for Novel Discovery   ($CCV)"
+echo
+dim "    workdir  $WORKDIR"
+dim "    tools    hpcrun · hpcrepro · skills: hpc-slurm, repro"
+
+# What the system has learned so far — the reason to keep using it.
+KB="${ASCEND_HOME:-$HOME/.ascend}/knowledge/lessons.jsonl"
+if [ -s "$KB" ]; then
+  N=$(grep -c . "$KB" 2>/dev/null) || N=0
+  V=$(grep -c '"status": "verified"' "$KB" 2>/dev/null) || V=0
+  dim "    memory   $N lesson(s) carried forward, $V verified on real hardware"
+else
+  dim "    memory   empty — lessons accumulate as projects finish"
+fi
+echo
+fi
+
+# --------------------------------------------------------------- run mode ---
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+  dim "    Already inside allocation $SLURM_JOB_ID on $(hostname). Starting here."
+  echo
+  HERE=1
+fi
+
+command -v claude >/dev/null || {
+  echo "claude is not on PATH. Add: export PATH=\"\$HOME/.npm-global/bin:\$PATH\"" >&2
+  exit 1
+}
+if [ ! -d "$WORKDIR" ]; then
+  echo "creating workdir: $WORKDIR"
+  mkdir -p "$WORKDIR" || { echo "cannot create workdir: $WORKDIR" >&2; exit 1; }
+fi
+
+# ------------------------------------------------------------------- auth ---
+# A Pro/Max subscription covers Claude Code and is the cheaper path;
+# ANTHROPIC_API_KEY outranks it in Claude Code's precedence order, so having
+# both set means paying per token on top of a plan you already have.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -r "$HOME/.config/anthropic/oauth-token" ]; then
+  CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.config/anthropic/oauth-token")"
+  export CLAUDE_CODE_OAUTH_TOKEN
+fi
+if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "warning: both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are set." >&2
+  echo "         The API key wins, so this session bills per token despite" >&2
+  echo "         your subscription. Unset ANTHROPIC_API_KEY to use the plan." >&2
+elif [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "warning: no credential found (neither CLAUDE_CODE_OAUTH_TOKEN nor" >&2
+  echo "         ANTHROPIC_API_KEY). Run 'claude setup-token' on a machine" >&2
+  echo "         with a browser, or see install.sh for the API-key route." >&2
+fi
+
+if [ "$HERE" = "1" ]; then
+  cd "$WORKDIR"
+  exec claude "${ARGS[@]+"${ARGS[@]}"}"
+fi
+
+dim "    allocation  -p $PART -c $CPUS --mem=$MEM -t $TIME"
+dim "    the session ends when the walltime expires; submitted jobs keep running."
+echo
+
+exec srun --partition="$PART" ${QOS:+--qos="$QOS"} --ntasks=1 --cpus-per-task="$CPUS" \
+     --mem="$MEM" --time="$TIME" --job-name=ascend --pty \
+     bash -lc "cd $(printf '%q' "$WORKDIR") && exec claude $(printf '%q ' "${ARGS[@]+"${ARGS[@]}"}")"

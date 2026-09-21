@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Mock sbatch: runs the script synchronously in the background, records state.
+
+Only for offline verification of the hpcrun control flow. Never for real use.
+"""
+import os
+import re
+import subprocess
+import sys
+import time
+
+STATE = os.environ.get("MOCKSLURM_STATE", "/tmp/mockslurm")
+os.makedirs(STATE, exist_ok=True)
+
+args = [a for a in sys.argv[1:]]
+test_only = "--test-only" in args
+args = [a for a in args if a not in ("--parsable", "--test-only")]
+if not args:
+    sys.stderr.write("sbatch: error: no script given\n")
+    sys.exit(1)
+script = args[-1]
+
+text = open(script).read()
+def directive(pat, default=None):
+    m = re.search(r"^#SBATCH\s+%s" % pat, text, re.M)
+    return m.group(1) if m else default
+
+wall = directive(r"--time=(\S+)", "00:10:00")
+h, m, s = (list(map(int, wall.split(":"))) + [0, 0, 0])[:3]
+limit = h * 3600 + m * 60 + s
+memg = directive(r"--mem=(\d+)G")
+memlimit = int(memg) * 1024**3 if memg else None
+
+if test_only:
+    sys.stderr.write("sbatch: Job %d to start immediately\n" % 1)
+    sys.exit(0)
+
+jid = str(int(time.time() * 1000) % 100000000)
+outp = errp = None
+mo = re.search(r"^#SBATCH\s+--output=(\S+)", text, re.M)
+me = re.search(r"^#SBATCH\s+--error=(\S+)", text, re.M)
+if mo:
+    outp = mo.group(1).replace("%j", jid)
+    # Real Slurm does NOT create this directory. The mock does not either --
+    # it fails the job, exactly as the cluster would.
+    if not os.path.isdir(os.path.dirname(outp)):
+        sys.stderr.write("sbatch: error: Unable to open file %s\n" % outp)
+        sys.exit(1)
+if me:
+    errp = me.group(1).replace("%j", jid)
+
+with open(os.path.join(STATE, jid + ".meta"), "w") as fh:
+    fh.write("%s\n%s\n%s\n" % (script, limit, memlimit or ""))
+
+runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_runner.py")
+env = dict(os.environ, SLURM_JOB_ID=jid, MOCKSLURM_STATE=STATE,
+           MOCK_WALL=str(limit), MOCK_MEM=str(memlimit or ""))
+out = open(outp, "w") if outp else subprocess.DEVNULL
+err = open(errp, "w") if errp else subprocess.DEVNULL
+subprocess.Popen([sys.executable, runner, script, jid],
+                 env=env, stdout=out, stderr=err, start_new_session=True)
+
+with open(os.path.join(STATE, jid + ".state"), "w") as fh:
+    fh.write("RUNNING")
+print(jid)

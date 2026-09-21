@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# ASCEND-ALL — one front door for all three resources. Runs local Claude Code to
+# reason about the job, probes what's free RIGHT NOW, recommends a resource, and
+# on your OK hands off by launching that resource's front door.
+#
+#   ascend-all "train a 7B model for ~6 hours on one GPU"   # describe the job
+#   ascend-all                                              # it will ask
+#   ascend-all -d ~/proj "quick CUDA sanity check"          # set a project dir
+#   ascend-all --probe                                      # just show the snapshot
+#
+# Resources: ncshare (Slurm H200, laptop-driven) · hazel-vcl (Slurm typed GPUs,
+# agent on node) · hurricane (one Blackwell, no scheduler, agent on box).
+set -Eeuo pipefail
+
+SELF="$0"; while [ -h "$SELF" ]; do D="$(cd "$(dirname "$SELF")" && pwd)"; SELF="$(readlink "$SELF")"; case "$SELF" in /*) ;; *) SELF="$D/$SELF";; esac; done
+BINDIR="$(cd "$(dirname "$SELF")" && pwd)"
+PROBE="$BINDIR/ascend-probe"; [ -x "$PROBE" ] || PROBE="ascend-probe"
+
+WORKDIR=""; JOB=""; PROBE_ONLY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) WORKDIR="$2"; shift 2 ;;
+    --probe) PROBE_ONLY=1; shift ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) JOB="${JOB:+$JOB }$1"; shift ;;
+  esac
+done
+
+b()  { printf '\033[38;5;39m%s\033[0m\n' "$*"; }
+dim(){ printf '\033[38;5;245m%s\033[0m\n' "$*"; }
+
+# ---- NC STATE + DUKE banner (Wolfpack red 160 / Duke blue 26) -----------------
+printf '\033]0;NC STATE + DUKE ASCEND-ALL\007'
+echo
+printf '    \033[1;38;5;160mNC STATE\033[0m   \033[38;5;245m+\033[0m   \033[1;38;5;26mDUKE\033[0m\n'
+printf '\033[38;5;196m    ▄▀█ █▀ █▀▀ █▀▀ █▄░█ █▀▄\033[0m\n'
+printf '\033[38;5;202m    █▀█ ▄█ █▄▄ ██▄ █░▀█ █▄▀\033[0m\n'
+echo
+printf '    \033[1mAI-powered Automation Scientific Computing and Discovery System\033[0m\n'
+dim '    Autonomous Scientific Computing Engine for Novel Discovery (ASCEND)'
+echo
+b   '    one front door — routing across ncshare · hazel · hurricane'
+dim '    Developed by NC State AI Hub for Science, OIT Advanced Computing, and Duke OIT Research Computing and Support Services.'
+dim '    contact  Dr. Paul Liu: jpliu@ncsu.edu,  Andrew Petersen: aapeters@ncsu.edu; Uthpala Herath: uthpala.herath@duke.edu'
+echo
+dim "probing live availability..."
+SNAP="$("$PROBE" --json 2>/dev/null || echo '{}')"
+"$PROBE" 2>/dev/null || true
+
+[ "$PROBE_ONLY" = "1" ] && exit 0
+
+# ---- route loop: 0 at the confirm prompt returns here with a fresh query ----
+while :; do
+[ -n "$JOB" ] || { printf 'Describe the job (GPU? how long? how many/which GPUs? need it now?)\n' ; IFS= read -e -r -p '> ' JOB </dev/tty || true; }
+[ -n "$JOB" ] || { echo "no job described; nothing to route (Ctrl-C to quit)." >&2; continue; }
+
+# ---- ask LOCAL Claude Code to reason about the best resource -----------------
+read -r -d '' POLICY <<'POL' || true
+You are the ASCEND router. Pick ONE resource for the user's job from a live snapshot.
+Resource profiles:
+- hurricane: ONE RTX PRO 6000 Blackwell (~96 GB), NO scheduler, agent runs on the box, zero queue. Best for: one-GPU jobs that fit ~96 GB, interactive/short-to-medium, when you want it NOW and its GPU is free. Shared by courtesy.
+- ncshare: Slurm cluster, H200 GPUs, laptop-driven (agent on the Mac, compute via proxy). Best for: batch/long single-GPU jobs, needing H200, or when hurricane is busy. Jobs may queue.
+- hazel: NCSU Hazel Slurm cluster, many typed GPUs (l40s/h100/a100), laptop-driven via the multiplexed login-node alias (scheduling + env builds only there; all compute via sbatch). Best for: multi-GPU, a specific GPU type, or very long queued jobs. Cold link needs one password+Duo first.
+- local: no GPU needed and light -> just run on the Mac.
+Rules: match GPU need, VRAM, #GPUs, GPU type, and duration to the profile; then break ties by the snapshot (free_now beats queued; a warm hazel beats a cold one for a quick job). If the job needs a GPU and hurricane.free_now and it fits one ~96 GB card and it is not a huge multi-GPU/very-long run, prefer hurricane. Needs H200 -> ncshare. Needs multi-GPU or a specific non-Blackwell type -> hazel.
+Output ONLY a single JSON object, no prose, no code fence:
+{"resource":"hurricane|ncshare|hazel|local","reason":"one sentence tying job nature + live availability","warnings":"empty or a caveat (e.g. hazel cold needs Duo; hurricane GPU busy)"}
+POL
+PROMPT="$POLICY
+
+LIVE SNAPSHOT (JSON): $SNAP
+
+JOB: $JOB
+
+Remember: output ONLY the JSON object."
+
+dim "asking local Claude Code to choose..."
+VERDICT="$(printf '%s' "$PROMPT" | claude -p 2>/dev/null || true)"
+
+# ---- parse verdict (fall back to a deterministic rule if needed) ------------
+DECISION="$(SNAP="$SNAP" JOB="$JOB" VERDICT="$VERDICT" python3 <<'PY'
+import json, os, re
+snap = json.loads(os.environ.get("SNAP") or "{}")
+job  = os.environ.get("JOB","").lower()
+v    = os.environ.get("VERDICT","")
+res=reason=warn=None
+m = re.search(r'\{.*\}', v, re.S)
+if m:
+    try:
+        d=json.loads(m.group(0)); res=d.get("resource"); reason=d.get("reason"); warn=d.get("warnings")
+    except Exception: pass
+if res not in ("hurricane","ncshare","hazel","local"):
+    # deterministic fallback
+    gpu = any(k in job for k in ("gpu","cuda","train","inference","torch","model","fine-tune","finetune"))
+    multi = any(k in job for k in ("multi-gpu","multi gpu","2 gpu","4 gpu","8 gpu","several gpu"))
+    h200 = "h200" in job
+    typed = any(k in job for k in ("h100","a100","l40"))
+    long = any(k in job for k in ("hour","overnight","day","long","week"))
+    hur = snap.get("hurricane",{}); nc = snap.get("ncshare",{})
+    if not gpu:
+        res, reason = "local", "no GPU needed — light enough for the Mac"
+    elif multi or typed:
+        res, reason = "hazel", "needs multiple/typed GPUs — Hazel's queue has them"
+    elif h200:
+        res, reason = "ncshare", "needs H200 — that's NCShare"
+    elif hur.get("free_now") and not long:
+        res, reason = "hurricane", "one-GPU job and hurricane's Blackwell is free now (no queue)"
+    elif nc.get("reachable"):
+        res, reason = "ncshare", ("hurricane busy or long run — NCShare H200 " + str(nc.get("note","")))
+    else:
+        res, reason = "hurricane", "fallback: single-GPU box"
+    warn = warn or ""
+print(json.dumps({"resource":res,"reason":reason or "","warnings":warn or ""}))
+PY
+)"
+RES="$(printf '%s' "$DECISION" | python3 -c 'import json,sys;print(json.load(sys.stdin)["resource"])')"
+REASON="$(printf '%s' "$DECISION" | python3 -c 'import json,sys;print(json.load(sys.stdin)["reason"])')"
+WARN="$(printf '%s' "$DECISION" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("warnings",""))')"
+
+echo
+b "  Recommendation: $RES"
+dim "  why: $REASON"
+[ -n "$WARN" ] && dim "  note: $WARN"
+echo
+
+# ---- confirm + hand off -----------------------------------------------------
+printf 'Launch on %s? [Y/n, 1-4/name to override, or 0 for a new query]\n' "$RES"
+printf '  override: \033[1m1)\033[0m \033[38;5;39mncshare\033[0m   \033[1m2)\033[0m \033[38;5;160mhazel\033[0m   \033[1m3)\033[0m \033[38;5;202mhurricane\033[0m   \033[1m4)\033[0m \033[38;5;28mlocal\033[0m   \033[1m0)\033[0m \033[38;5;245mnone \xe2\x80\x94 describe a different job\033[0m\n'
+IFS= read -e -r -p '> ' ANS </dev/tty || true
+case "$ANS" in
+  n|N) echo "cancelled."; exit 0 ;;
+  0|none) JOB=""; echo; dim "ok — describe a different job (Ctrl-C to quit)."; continue ;;
+  1) RES="ncshare" ;;
+  2) RES="hazel" ;;
+  3) RES="hurricane" ;;
+  4) RES="local" ;;
+  ncshare|vcl|hazel|hurricane|local) RES="$ANS" ;;
+  ''|y|Y) : ;;  # accept recommendation
+  *) echo "unrecognized '$ANS' — keeping recommendation ($RES)" ;;
+esac
+break
+done
+[ "$RES" = "hazel-vcl" ] && RES="hazel"; [ "$RES" = "vcl" ] && RES="hazel"
+
+case "$RES" in
+  hurricane) L=ascend-hurricane ;;
+  ncshare)   L=ascend-ncshare ;;
+  hazel)     if command -v ascend-hazel >/dev/null 2>&1; then L=ascend-hazel
+             else L=ascend-vcl; fi ;;   # login-node launcher; fall back to the VCL model
+  local)     dim "  running locally."; cd "${WORKDIR:-$PWD}"; exec claude ;;
+  *) echo "unknown resource: $RES" >&2; exit 1 ;;
+esac
+command -v "$L" >/dev/null || { echo "launcher '$L' not on PATH — is that resource installed?" >&2; exit 1; }
+dim "  handing off to $L ..."
+if [ -n "$WORKDIR" ]; then exec "$L" -d "$WORKDIR"; else exec "$L"; fi

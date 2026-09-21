@@ -1,0 +1,125 @@
+================================================================================
+ ASCEND-HAZEL — Installation Guide
+ AI-agent scientific computing on NC State's Hazel HPC, driven from your laptop
+ NC State AI Hub for Science and OIT Advanced Computing team
+ Contact: Dr. Paul Liu (jpliu@ncsu.edu) or Andrew Petersen (aapeters@ncsu.edu)
+================================================================================
+
+WHAT THIS IS
+
+ASCEND-HAZEL puts the AI agent (Claude Code) on YOUR laptop and connects it to
+NC State's Hazel HPC cluster through a single multiplexed ssh link to the
+login node (login.hpc.ncsu.edu). You type your password and approve one Duo
+push; the connection then persists for 8 hours and every cluster command the
+agent runs rides it with no further prompts.
+
+Compared with running the agent on an HPC-VCL node, this model needs no VCL
+reservation, has no VCL session time limits (30 days faculty / 10 hours
+students), and requires no Claude Code install or login on the cluster side.
+The trade-off: the agent runs on your laptop, so it works only while your
+laptop is on and connected. Slurm jobs it has already submitted keep running
+on the cluster regardless — you can close the lid, come back, and resume the
+agent (claude --resume) to check on them.
+
+House rule the agent follows: the shared login node is used ONLY for
+(1) job scheduling — sbatch, squeue, hpcrun — and (2) environment builds —
+conda/pip/module work (the login node has internet; compute nodes do not).
+Everything that actually computes runs inside a Slurm job, with typed GPU
+requests (e.g. --gres=gpu:l40s:1).
+
+--------------------------------------------------------------------------------
+STEP 0 — PREREQUISITES
+--------------------------------------------------------------------------------
+
+* A Hazel account: your Unity ID, added to an HPC project by its PI.
+  Test it:   ssh <unityID>@login.hpc.ncsu.edu   (password + Duo push)
+* macOS, Linux, or Windows with WSL (Ubuntu). Windows users: do EVERYTHING
+  inside the Ubuntu shell. Fetch the zip from inside Ubuntu (e.g. from
+  /mnt/c/Users/<you>/Downloads), unzip it in your Linux home, and never work
+  under /mnt/c. If a bundled tool says "Permission denied":
+      sudo chown -R $USER:$USER <dir>  &&  chmod -R u+x <dir>
+* Claude Code with a Claude subscription. If it is not installed, the setup
+  script offers to install it:
+      curl -fsSL https://claude.ai/install.sh | bash
+  After setup, run `claude` once and log in (subscription login).
+
+--------------------------------------------------------------------------------
+STEP 1 — THE MULTIPLEXED SSH ALIAS
+--------------------------------------------------------------------------------
+
+The setup script detects or creates this block in ~/.ssh/config. To add it by
+hand, paste (replace <unityID> with yours):
+
+    Host hazel
+      HostName login.hpc.ncsu.edu
+      User <unityID>
+      ControlMaster auto
+      ControlPath ~/.ssh/cm-%r@%h-%p
+      ControlPersist 8h
+      ServerAliveInterval 30
+      ServerAliveCountMax 4
+
+How it works: the FIRST `ssh hazel` opens a master connection (password +
+Duo) and leaves it running for 8 hours; every later `ssh hazel '<cmd>'`,
+scp, and rsync reuses it instantly, with no prompt.
+
+Test: run `ssh hazel` in one terminal (authenticate, then exit). In a NEW
+terminal, `ssh hazel 'hostname'` must return login node's name with NO prompt.
+
+Useful link commands:
+    ssh -O check hazel     is the link warm? (local probe, never prompts)
+    ssh -O exit  hazel     force the link cold (next connect re-authenticates)
+
+--------------------------------------------------------------------------------
+STEP 2 — RUN THE SETUP
+--------------------------------------------------------------------------------
+
+    unzip ascend-hazel.zip && cd ascend-hazel
+    bash hazel/setup-hazel.sh
+
+The script, in order: checks/installs Claude Code on the laptop; detects or
+creates the `hazel` alias; warms the link (it can open the extra terminal for
+you — you only type the password and approve Duo there); installs the ASCEND
+harness on Hazel (hpcrun, hpcrepro, fetch-paper into ~/bin, the hpc-slurm
+skill into ~/.claude/skills, working dir /share/<unityID>/agents — file
+copies only, no compute); installs the laptop side (the `ascend-hazel`
+launcher and the hazel-remote skill, personalized with your Unity ID).
+
+--------------------------------------------------------------------------------
+STEP 3 — VERIFY (from a NEW terminal)
+--------------------------------------------------------------------------------
+
+    ascend-hazel --check
+
+Expected: link WARM, login node hostname, a Slurm version, and hpcrun /
+hpcrepro found in ~/bin. Fixes:
+  * command not found        ->  source ~/.bashrc  (or add ~/.local/bin to PATH)
+  * link COLD                ->  ssh hazel   once, then re-check
+  * tools missing on Hazel   ->  re-run:  bash hazel/deploy-hazel.sh
+
+--------------------------------------------------------------------------------
+STEP 4 — DAILY USE
+--------------------------------------------------------------------------------
+
+    ssh hazel                     # once per work session (8h persistence)
+    cd <your project>
+    ascend-hazel                  # starts the agent in this project
+
+The first start seeds the project with AGENTS.md — the agent's standing
+instructions (login-node policy, Slurm/typed-GPU rules, storage rules) — and
+a status line showing whether the hazel link is warm.
+
+Storage rules the agent knows (worth knowing yourself):
+  * /home/<unityID>   15 GB / 10,000 files — scripts and configs ONLY
+  * /share/<unityID>  20 TB scratch, purged after 30 days without access —
+                      working data, conda envs, pip caches live here
+  * conda: always `conda env create --prefix ...`, never bare `-n`;
+    point ~/.condarc pkgs_dirs and pip's cache under /share/<unityID>
+
+Laptop closed = agent paused (submitted Slurm jobs keep running). To resume:
+reopen, `ssh hazel` if the link went cold, then `claude --resume` in the
+project. If you need the agent itself to keep working unattended on the
+cluster, ask about the ASCEND-VCL model (agent runs on a personal HPC-VCL
+node inside tmux) — both models coexist happily.
+
+================================================================================

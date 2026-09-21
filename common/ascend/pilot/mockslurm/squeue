@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import os, sys
+STATE=os.environ.get("MOCKSLURM_STATE","/tmp/mockslurm")
+jid=None
+a=sys.argv[1:]
+for i,x in enumerate(a):
+    if x=="-j": jid=a[i+1]
+p=os.path.join(STATE,(jid or "")+".state")
+if not jid or not os.path.exists(p): sys.exit(0)
+st=open(p).read().strip()
+if st not in ("PENDING","RUNNING","CONFIGURING","COMPLETING"): sys.exit(0)
+el=os.path.join(STATE,jid+".elapsed")
+print("%s|None|%s|1"%(st, open(el).read().strip() if os.path.exists(el) else "0:00"))

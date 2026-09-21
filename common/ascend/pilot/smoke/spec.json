@@ -1,0 +1,36 @@
+{
+  "schema": "hpcrun/jobspec/1",
+  "name": "hpcrun-smoke",
+  "scheduler": "slurm",
+  "account": null,
+  "partition": "interactive-gpu",
+  "qos": null,
+  "nodes": 1,
+  "tasks_per_node": 1,
+  "cpus_per_task": 2,
+  "gpus_per_node": 1,
+  "mem_per_node_gb": 16,
+  "walltime_minutes": 10,
+  "environment": {
+    "modules": [],
+    "conda_env": "/work/<user>/regional_gs/env",
+    "container": null,
+    "vars": {
+      "FAIL_MODE": "none",
+      "TMPDIR": "/work/<user>/tmp",
+      "PYTHONUNBUFFERED": "1"
+    }
+  },
+  "entrypoint": [
+    "python",
+    "run.py"
+  ],
+  "inputs": [],
+  "outputs": [
+    "metrics.json"
+  ],
+  "retry_policy": {
+    "maximum_attempts": 2
+  },
+  "gpu_type": "h200"
+}

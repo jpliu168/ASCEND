@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+# Mirrors the real association set: one account, `ncsu`.
+print("ncsu|gpu-hp|ncsu_h200_hp|gres/gpu=64|1-00:00:00")
+print("ncsu|interactive-gpu|normal||01:00:00")
+print("ncsu|common|normal||2-00:00:00")

@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# ASCEND-NCSHARE — the ASCEND front door, running on the Mac.
+#
+# The agent (Claude Code) runs locally with your Mac's skills, network and
+# login; cluster work is routed per-command through the ssh aliases
+# ncshare-agent / ncshare-agent-gpu, which provision or reuse SLURM jobs
+# automatically (see userguide.ncshare.org/guides/ai).
+#
+#   ascend-ncshare                  # start in the current directory
+#   ascend-ncshare -d ~/regional_gs # start in a specific project
+#   ascend-ncshare --check          # test both cluster aliases and exit
+#
+# Written for macOS bash 3.2.
+set -Eeuo pipefail
+
+# Resolve the real script location even when invoked via the ~/.local/bin symlink
+SRC="$0"
+while [ -h "$SRC" ]; do
+  D="$(cd "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  case "$SRC" in /*) ;; *) SRC="$D/$SRC" ;; esac
+done
+BUNDLE="$(cd "$(dirname "$SRC")/.." && pwd)"
+# Default workspace mirrors the cluster's /work/<user>; -d or
+# ASCEND_NCSHARE_PROJECT_DIR overrides. Running inside an existing project
+# (a dir that already has AGENTS.md or CLAUDE.md) stays in that project.
+WORKDIR="${ASCEND_NCSHARE_PROJECT_DIR:-$HOME/agents/ncshare/projects}"
+if [ -f "$PWD/AGENTS.md" ] || [ -f "$PWD/CLAUDE.md" ]; then WORKDIR="$PWD"; fi
+CHECK=0
+ARGS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) WORKDIR="$2"; shift 2 ;;
+    --check) CHECK=1; shift ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --) shift; while [ $# -gt 0 ]; do ARGS[${#ARGS[@]}]="$1"; shift; done ;;
+    *) ARGS[${#ARGS[@]}]="$1"; shift ;;
+  esac
+done
+
+b()  { printf '\033[38;5;31m%s\033[0m\n' "$*"; }
+dim(){ printf '\033[38;5;245m%s\033[0m\n' "$*"; }
+
+if [ "$CHECK" = "1" ]; then
+  echo "Checking cluster aliases (first connect provisions a SLURM job — can take ~1 min)..."
+  set +e
+  printf '  CPU (ncshare-agent):     '
+  out=$(ssh ncshare-agent 'hostname && echo OK' 2>&1)
+  if [ $? -eq 0 ]; then echo "OK — $(printf '%s' "$out" | head -1)"
+  else
+    echo "FAILED / unreachable"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    echo "      diagnose:  ssh -v ncshare-agent hostname"
+  fi
+  printf '  GPU (ncshare-agent-gpu): '
+  out=$(ssh ncshare-agent-gpu 'hostname && nvidia-smi -L | head -1 && echo OK' 2>&1)
+  if [ $? -eq 0 ]; then echo "OK — $(printf '%s' "$out" | head -1)"
+  else echo "FAILED / unreachable (or a GPU job is still queuing — retry shortly)"; fi
+  set -e
+  exit 0
+fi
+
+CCV="$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+[ -n "$CCV" ] && CCV="Claude Code v$CCV" || { echo "claude is not on PATH." >&2; exit 1; }
+if [ ! -d "$WORKDIR" ]; then
+  echo "creating workdir: $WORKDIR"
+  mkdir -p "$WORKDIR" || { echo "cannot create workdir: $WORKDIR" >&2; exit 1; }
+fi
+
+printf '\033]0;DUKE/NC STATE ASCEND-NCSHARE — %s\007' "${WORKDIR##*/}"
+echo
+b '    DUKE/NC STATE'
+b '    ▄▀█ █▀ █▀▀ █▀▀ █▄░█ █▀▄'
+b '    █▀█ ▄█ █▄▄ ██▄ █░▀█ █▄▀'
+echo
+printf '    \033[1mAI-powered Automation Scientific Computing and Discovery System\033[0m\n'
+dim "    Autonomous Scientific Computing Engine for Novel Discovery   ($CCV)"
+echo
+dim "    workdir  $WORKDIR"
+dim "    cluster  ssh ncshare-agent '<cmd>' (CPU) · ssh ncshare-agent-gpu '<cmd>' (GPU)"
+dim "    tools    ~/bin on cluster: hpcrun · hpcrepro · fetch-paper"
+echo
+dim "    Developed by Duke OIT Research Computing and Support Services and NC State AI Hub for Science"
+dim "    contact   Dr. Uthpala Herath: uthpala.herath@duke.edu, or Dr. Paul Liu: jpliu@ncsu.edu"
+# Warm/cold cluster link (ControlMaster socket)
+if ssh -o BatchMode=yes -O check ncshare-agent >/dev/null 2>&1; then
+  dim "    link     warm — a compute job is already backing the alias"
+else
+  dim "    link     cold — first cluster command will provision a SLURM job"
+fi
+
+# Knowledge base: the local mirror pulled by sync-ncshare.sh
+KB="$BUNDLE/../ncshare-sync/ascend-home/knowledge/lessons.jsonl"
+if [ -s "$KB" ]; then
+  N=$(grep -c . "$KB" 2>/dev/null) || N=0
+  V=$(grep -c '"status": "verified"' "$KB" 2>/dev/null) || V=0
+  dim "    memory   $N lesson(s) in the local mirror, $V verified (sync-ncshare.sh to refresh)"
+else
+  dim "    memory   no local mirror yet — run sync-ncshare.sh after finished projects"
+fi
+echo
+
+# Ensure the project carries the ASCEND-NCSHARE instructions and statusline.
+if [ ! -f "$WORKDIR/AGENTS.md" ] && [ ! -f "$WORKDIR/CLAUDE.md" ]; then
+  # Resolve the NCShare username (from the ncshare-agent alias, else $USER) and
+  # substitute it into the template so /work/<user> and squeue -u <user> are correct.
+  NCUSER="$(awk '/^Host ncshare-agent$/{b=1;next} b&&/^Host /{b=0} b&&$1=="User"{print $2;exit}' "$HOME/.ssh/config" 2>/dev/null)"
+  NCUSER="${NCUSER:-$USER}"
+  sed "s/@@NCUSER@@/$NCUSER/g" "$BUNDLE/AGENTS-template.md" > "$WORKDIR/AGENTS.md"
+  dim "    (added AGENTS.md to this project from the ascend-ncshare template; user=$NCUSER)"
+fi
+if [ ! -f "$WORKDIR/.claude/settings.json" ]; then
+  mkdir -p "$WORKDIR/.claude"
+  printf '{\n  "statusLine": { "type": "command", "command": "~/.claude/ascend-ncshare-statusline.sh" }\n}\n' \
+    > "$WORKDIR/.claude/settings.json"
+fi
+
+cd "$WORKDIR"
+exec claude ${ARGS[@]+"${ARGS[@]}"}

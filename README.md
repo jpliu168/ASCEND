@@ -23,6 +23,23 @@ The agent reasons through a cloud language model that never has cluster access. 
 
 ---
 
+> [!IMPORTANT]
+> **Before you go any further, you need an account you can already reach over SSH.**
+>
+> ASCEND installs onto a resource you have access to. It does not obtain access for you, and the installer will stop if it cannot log in. Confirm at least one of these works from your own terminal, right now:
+>
+> ```bash
+> ssh <your-ncshare-username>@login.ncshare.org     # NCShare
+> ssh <your-unity-id>@login.hpc.ncsu.edu            # NCSU Hazel
+> ssh <your-username>@<your-workstation>            # a GPU workstation such as hurricane
+> ```
+>
+> If none of those gets you a shell, stop here and request an account first. NCShare accounts come through [userguide.ncshare.org](https://userguide.ncshare.org/guides/); Hazel accounts require a Unity ID and membership in an HPC project, see [hpc.ncsu.edu](https://hpc.ncsu.edu/main.php); a workstation account comes from whoever administers that machine.
+>
+> You will also need Claude Code with a Claude subscription on your laptop. The installer offers to fetch it if it is missing.
+
+---
+
 ## Quick start
 
 ```bash

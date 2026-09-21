@@ -149,8 +149,9 @@ Host hazel
   ServerAliveCountMax 4
 
 # hurricane: key authentication, no Duo (run ssh-copy-id hurricane once)
-Host hurricane
-  HostName hurricane.meas.ncsu.edu
+# you can use your own machine name
+Host hurricane 
+  HostName xxx.xxx.xxx.edu
   User <unityID>
   ControlMaster auto
   ControlPath ~/.ssh/sockets/%r@%h-%p

@@ -149,8 +149,12 @@ Host hazel
   ServerAliveCountMax 4
 
 # hurricane: key authentication, no Duo (run ssh-copy-id hurricane once)
+<<<<<<< HEAD
 # you can use your own machine name
 Host hurricane 
+=======
+Host hurricane
+>>>>>>> cd369aad9914306638d9273fd14a947146533c39
   HostName xxx.xxx.xxx.edu
   User <unityID>
   ControlMaster auto

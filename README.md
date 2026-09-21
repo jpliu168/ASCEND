@@ -133,7 +133,7 @@ Host hazel
 
 # hurricane: key authentication, no Duo (run ssh-copy-id hurricane once)
 Host hurricane
-  HostName hurricane.meas.ncsu.edu
+  HostName xxx.xxx.xxx.edu
   User <unityID>
   ControlMaster auto
   ControlPath ~/.ssh/sockets/%r@%h-%p

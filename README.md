@@ -185,6 +185,16 @@ tools/                     scripts that build the distributable zips
 
 ---
 
+## Testing
+
+If you were asked to trial this before release, follow
+[docs/TESTING.md](docs/TESTING.md) and report what happened. It walks through
+getting the code, installing, verifying from a fresh terminal, seeding a
+project, giving the agent a real job, and the routing front door, and it says
+what is worth reporting at each step.
+
+---
+
 ## Standalone install guides
 
 Long-form guides, suitable for handing to someone who is not reading this file:

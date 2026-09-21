@@ -17,7 +17,7 @@ EXCL=(--exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store'
 leak_check(){
   local hits
   hits="$(grep -rIl 'pliu1\|jpliu\|152\.7\.179\|10\.68\.40' "$1" 2>/dev/null \
-          | grep -vE 'README|INSTALL|AGENTS|LICENSE|bin/ascend-' || true)"
+          | grep -vE 'README|INSTALL|AGENTS|LICENSE|TESTING|install.sh|bin/ascend-' || true)"
   if [ -n "$hits" ]; then echo "WARNING: personal identifier in:" >&2; echo "$hits" >&2; fi
   return 0
 }

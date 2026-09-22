@@ -73,6 +73,9 @@ if missing, create the SSH alias if you do not have one, open a second terminal
 so you can authenticate once, copy files out to the resource, and symlink the
 launcher into `~/.local/bin`.
 
+> [!warning]
+> Do not run `install.sh` from a TMUX session on your machine as it will not open a new terminal to warm up the SSH connection. Run it from a regular terminal session.
+
 **Report:** every prompt you were unsure how to answer. Every point where you
 did not know whether it was working or stuck. Anything that failed outright,
 with the exact message.

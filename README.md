@@ -50,6 +50,9 @@ cd ASCEND
 
 The installer asks which resources you want and loops until you say you are done. Re-run it any time to add another. **Keep the clone** after installing: the commands it puts in `~/.local/bin` are symlinks into this directory, so a later `git pull` updates every installed command in place.
 
+> [!warning]
+> Do not run `install.sh` from a TMUX session on your machine as it will not open a new terminal to warm up the SSH connection. Run it from a regular terminal session.
+
 To install exactly one arrangement without the menu:
 
 ```bash

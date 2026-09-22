@@ -5,7 +5,7 @@
 Personal AI agents for autonomous scientific computing across HPC clusters and GPU workstations.
 
 *Developed by the NC State AI Hub for Science and the OIT Advanced Computing team, with Duke OIT Research Computing and Support Services (NCShare arrangement).*
-Contact: Dr. Paul Liu (<jpliu@ncsu.edu>), Andrew Petersen (<aapeters@ncsu.edu>), Dr. Uthpala Herath (<uthpala.herath@duke.edu>)
+Contact: Dr. Paul Liu (<jpliu@ncsu.edu>), Dr. Andrew Petersen (<aapeters@ncsu.edu>), Dr. Uthpala Herath (<uthpala.herath@duke.edu>)
 
 ---
 

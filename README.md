@@ -5,7 +5,7 @@
 Personal AI agents for autonomous scientific computing across HPC clusters and GPU workstations.
 
 *Developed by the NC State AI Hub for Science and the OIT Advanced Computing team, with Duke OIT Research Computing and Support Services (NCShare arrangement).*
-Contact: Dr. Paul Liu (<jpliu@ncsu.edu>), Andrew Petersen (<aapeters@ncsu.edu>), Dr. Uthpala Herath (<uthpala.herath@duke.edu>)
+Contact: Dr. Paul Liu (<jpliu@ncsu.edu>), Dr. Andrew Petersen (<aapeters@ncsu.edu>), Dr. Uthpala Herath (<uthpala.herath@duke.edu>)
 
 ---
 
@@ -49,6 +49,9 @@ cd ASCEND
 ```
 
 The installer asks which resources you want and loops until you say you are done. Re-run it any time to add another. **Keep the clone** after installing: the commands it puts in `~/.local/bin` are symlinks into this directory, so a later `git pull` updates every installed command in place.
+
+> [!warning]
+> Do not run `install.sh` from a TMUX session on your machine as it will not open a new terminal to warm up the SSH connection. Run it from a regular terminal session.
 
 To install exactly one arrangement without the menu:
 

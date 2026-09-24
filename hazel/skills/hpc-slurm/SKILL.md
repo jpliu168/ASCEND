@@ -1,24 +1,26 @@
 ---
 name: hpc-slurm
-description: Run and iterate on Slurm HPC jobs on NC State's Hazel cluster from a personal HPC-VCL node, through the hpcrun harness — probe the cluster, create an immutable revision, validate, submit, poll, read logs, classify the failure, propose a bounded fix, resubmit. Use whenever the task involves sbatch, srun, squeue, sacct, a Slurm job, a GPU allocation, typed gres, module load cuda, $ASCEND_SHARE, an HPC-VCL node (vclhpc*), or "run this on Hazel / check the job / why did it fail / resubmit it".
+description: Run and iterate on Slurm HPC jobs on NC State's Hazel cluster, through the hpcrun harness — probe the cluster, create an immutable revision, validate, submit, poll, read logs, classify the failure, propose a bounded fix, resubmit. Use whenever the task involves sbatch, srun, squeue, sacct, a Slurm job, a GPU allocation, typed gres, module load cuda, $ASCEND_SHARE, or "run this on Hazel / check the job / why did it fail / resubmit it".
 ---
 
-# Running HPC jobs on NC State Hazel (from an HPC-VCL node)
+# Running HPC jobs on NC State Hazel (from the login node)
 
 Get scientific work through the Slurm scheduler correctly and iterate on it when
 it fails — without burning allocation, losing provenance, or hiding what
 happened.
 
-**Where you are: a personal HPC-VCL node** (e.g. `vclhpc10`), a dedicated,
-login-class VM reserved for you. It mounts your real `/home`, `/share`,
-`/usr/local/usrapps` and `/rsstu`; `sbatch` is local (no SSH hop to the node or
-to compute); it has internet; it has NO GPU. Interactive CPU work — builds,
-installs, env setup, data prep, quick diagnostics — runs here freely; nothing
-here disturbs other users. Real computation (training, simulation, large data
-processing) and anything needing a GPU goes to Slurm via `hpcrun`.
+**Where you are: the Hazel login node** (`login.hpc.ncsu.edu`), reached over
+the multiplexed `hazel` ssh alias. In the ASCEND-HAZEL model the agent itself
+normally runs on your laptop, not here — this skill is installed on the login
+node as part of setup so it's available if a session is ever started directly
+on Hazel too. **This node is shared with every other Hazel user**: use it ONLY
+for job scheduling (sbatch/squeue/hpcrun) and environment builds (conda/pip —
+it has internet; compute nodes don't). Cap any CPU-heavy command (solves,
+compiles, large git ops) with `$HAZEL_THROTTLE` — see AGENTS.md. Never run
+real computation here directly; everything goes to Slurm via `hpcrun`.
 
-Compute nodes have NO internet: download datasets/repos/papers here on the VCL
-node, never inside a job.
+Compute nodes have NO internet: download datasets/repos/papers here on the
+login node, never inside a job.
 
 ## The one rule
 

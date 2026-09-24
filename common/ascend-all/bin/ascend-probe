@@ -122,20 +122,36 @@ def probe_hazel():
         return r
     r["warm"] = True
     r["via"] = alias
+    # One batched round-trip (each hazel ssh call costs ~12s on GPFS) for node
+    # state, queue depth, and the live QOS/GPU-availability data a caller
+    # needs to judge wall-time fit itself. Deliberately raw and unparsed:
+    # QOS wall-time limits and GRES group caps drift, so this probe never
+    # hardcodes them -- sqos and si --gpus are the live source of truth for
+    # THIS account, right now; whoever reads gpu_avail_short_gpu vs
+    # gpu_avail_gpu_qos alongside sqos's own wall-time column decides fit.
     rc, out, err = run(SSH + [alias,
         "sinfo -h -o '%P %D %t' 2>/dev/null | grep -iE 'gpu' | head; "
-        "echo '::'; squeue -h -u \"$USER\" 2>/dev/null | wc -l"])
+        "echo '::Q::'; squeue -h -u \"$USER\" 2>/dev/null | wc -l; "
+        "echo '::SQOS::'; sqos 2>/dev/null; "
+        "echo '::SHORTGPU::'; si --gpus --qos short_gpu 2>/dev/null; "
+        "echo '::GPUQOS::'; si --gpus --qos gpu 2>/dev/null"], timeout=20)
     if rc != 0:
         r["reachable"] = True
         r["note"] = "warm, but sinfo/squeue failed (" + err[:40] + ")"
         return r
     r["reachable"] = True
-    part, _, queued = out.partition("::")
+    part, _, rest = out.partition("::Q::")
+    queued, _, rest = rest.partition("::SQOS::")
+    sqos_out, _, rest = rest.partition("::SHORTGPU::")
+    short_gpu_out, _, gpu_qos_out = rest.partition("::GPUQOS::")
     idle = sum(1 for ln in part.splitlines()
                if ln.strip() and ln.split()[-1].startswith(("idle", "mix")))
     r["gpu_nodes_idle_or_mixed"] = idle
     r["your_queue"] = queued.strip() or "0"
     r["free_now"] = idle > 0
+    r["sqos"] = sqos_out.strip()
+    r["gpu_avail_short_gpu"] = short_gpu_out.strip()
+    r["gpu_avail_gpu_qos"] = gpu_qos_out.strip()
     r["note"] = "warm; %d GPU node(s) idle/mixed, your queue=%s" % (idle, r["your_queue"])
     return r
 

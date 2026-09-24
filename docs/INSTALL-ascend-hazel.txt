@@ -42,6 +42,11 @@ STEP 0 — PREREQUISITES
   script offers to install it:
       curl -fsSL https://claude.ai/install.sh | bash
   After setup, run `claude` once and log in (subscription login).
+* Read NC State's own docs before running anything here:
+    Hazel Slurm QuickStart guide -- https://hpc.ncsu.edu/QuickStart/QuickStart-slurm.php
+    Hazel's Acceptable Use Policy -- https://hpc.ncsu.edu/Accounts/GetAccess.php
+  This harness enforces the operational rules (login-node use, typed gres,
+  storage locations) day to day but does not replace either document.
 
 --------------------------------------------------------------------------------
 STEP 1 — THE MULTIPLEXED SSH ALIAS
@@ -81,7 +86,7 @@ The script, in order: checks/installs Claude Code on the laptop; detects or
 creates the `hazel` alias; warms the link (it can open the extra terminal for
 you — you only type the password and approve Duo there); installs the ASCEND
 harness on Hazel (hpcrun, hpcrepro, fetch-paper into ~/bin, the hpc-slurm
-skill into ~/.claude/skills, working dir /share/<unityID>/agents — file
+skill into ~/.claude/skills, working dir /share/<group>/<unityID>/agents — file
 copies only, no compute); installs the laptop side (the `ascend-hazel`
 launcher and the hazel-remote skill, personalized with your Unity ID).
 
@@ -109,17 +114,40 @@ The first start seeds the project with AGENTS.md — the agent's standing
 instructions (login-node policy, Slurm/typed-GPU rules, storage rules) — and
 a status line showing whether the hazel link is warm.
 
-Storage rules the agent knows (worth knowing yourself):
+Storage rules the agent knows (worth knowing yourself; conda/pip setup
+refs -- Hazel side only, never your laptop --
+https://hpc.ncsu.edu/Software/Apps.php?app=Conda#loading and
+https://hpc.ncsu.edu/Software/Apps-slurm.php?app=Python#pip-cache):
   * /home/<unityID>   15 GB / 10,000 files — scripts and configs ONLY
-  * /share/<unityID>  20 TB scratch, purged after 30 days without access —
+  * /share/<group>/<unityID>  20 TB scratch, purged after 30 days without access —
                       working data, conda envs, pip caches live here
   * conda: always `conda env create --prefix ...`, never bare `-n`;
-    point ~/.condarc pkgs_dirs and pip's cache under /share/<unityID>
+    point ~/.condarc pkgs_dirs and pip's cache under /share/<group>/<unityID>
+    -- this is all on the HAZEL side (ssh hazel), never on your laptop's
+    own conda, which this harness never touches.
+  * On Hazel, ~/.condarc also needs a channel actually enabled, or the
+    first `conda create` there fails with NoChannelsConfiguredError --
+    check with `ssh hazel "conda config --show channels"`; a `channels:`
+    block with every line commented out is the usual cause. Enable
+    conda-forge, not defaults (defaults needs a paid Anaconda Inc. license
+    for organizational use; conda-forge is free/community-run).
 
 Laptop closed = agent paused (submitted Slurm jobs keep running). To resume:
 reopen, `ssh hazel` if the link went cold, then `claude --resume` in the
 project. If you need the agent itself to keep working unattended on the
 cluster, ask about the ASCEND-VCL model (agent runs on a personal HPC-VCL
 node inside tmux) — both models coexist happily.
+
+--------------------------------------------------------------------------------
+USAGE LOGGING
+--------------------------------------------------------------------------------
+
+Each ascend-hazel launch appends one line to a shared, append-only log on
+Hazel (/share/help/aapeters/ascend-usage/usage.log): a timestamp, your
+Unity ID, the site, and the launcher used. That's it -- no prompts, code,
+file paths, or job data are ever logged. This exists purely to measure
+adoption, to justify continued time/support for maintaining this tool.
+It's best-effort and never blocks or fails a launch (a cold `hazel` link
+just silently skips logging).
 
 ================================================================================

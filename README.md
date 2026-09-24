@@ -119,6 +119,8 @@ You need an account on at least one resource before installing:
 * **NCShare** an NCShare username with a `/work/<user>` directory
 * **hurricane** an account on the box (NC State MEAS)
 
+If you're setting up Hazel, read NC State's own docs first: the [Hazel Slurm QuickStart guide](https://hpc.ncsu.edu/QuickStart/QuickStart-slurm.php) and Hazel's [Acceptable Use Policy](https://hpc.ncsu.edu/Accounts/GetAccess.php). This harness enforces the operational rules (login-node use, typed gres, storage locations) day to day but does not replace either document.
+
 You also need macOS, Linux, or Windows with WSL (Ubuntu), plus `bash`, `ssh`, `rsync`, and `git`. On Windows, do everything inside the Ubuntu shell and keep the clone in the Linux home directory, not under `/mnt/c`.
 
 Claude Code with a Claude subscription must be installed on the laptop. The installer offers to fetch it (`curl -fsSL https://claude.ai/install.sh | bash`); run `claude` once afterwards to log in.
@@ -149,12 +151,8 @@ Host hazel
   ServerAliveCountMax 4
 
 # hurricane: key authentication, no Duo (run ssh-copy-id hurricane once)
-<<<<<<< HEAD
 # you can use your own machine name
-Host hurricane 
-=======
 Host hurricane
->>>>>>> cd369aad9914306638d9273fd14a947146533c39
   HostName xxx.xxx.xxx.edu
   User <unityID>
   ControlMaster auto
@@ -187,6 +185,12 @@ The rules each agent enforces per site:
 **NCShare.** The first command after an idle period can take about a minute while Slurm provisions the job. Wait it out rather than interrupting. `/work/<user>` is purged after seventy-five days.
 
 **hurricane.** The single GPU is shared by courtesy, so check `nvidia-smi` first and run one heavy job at a time. Long runs belong in `tmux`. Blackwell needs CUDA 12.8 or newer and `cu128` wheels.
+
+---
+
+## Usage logging
+
+Each `ascend-hazel` launch appends one line to a shared, append-only log on Hazel (`/share/help/aapeters/ascend-usage/usage.log`): a timestamp, your Unity ID, the site, and the launcher used. That's it — no prompts, code, file paths, or job data are ever logged. This exists purely to measure adoption, to justify continued time and support for maintaining this tool. It's best-effort and never blocks or fails a launch — a cold `hazel` link just silently skips logging.
 
 ---
 

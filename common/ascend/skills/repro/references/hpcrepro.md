@@ -254,7 +254,7 @@ else halts as `human_review`.
 
 ```bash
 hpcrepro spec --name NAME [--entrypoint PATH] [--args ...] \
-              [--partition interactive-gpu] [--gpus 1] [--gpu-type h200] \
+              [--partition interactive-gpu] [--qos QOS] [--gpus 1] [--gpu-type h200] \
               [--cpus 8] [--mem 64] [--walltime 15] [--outputs GLOB ...]
 ```
 
@@ -264,6 +264,15 @@ Writes `spec.json` in the hpcrun jobspec schema. `--entrypoint` is relative to
 need the clone's own package data and relative paths. `conda_env` points at
 `<project>/env`; `conda_sh` comes from `environment.conda_sh` in the recipe and
 must be set for a batch job to activate conda at all.
+
+**`--qos` defaults to unset (`null` in the generated spec) — it is not
+inferred from `--partition`.** On Hazel, a partition often has more than
+one usable QOS (e.g. `gpu_partners` offers both `short_gpu` and
+`scavenger_gpu`), so guessing would be wrong as often as not. Pass it
+explicitly, chosen the same way as any other Hazel GPU submission: check
+`sqos` and `si --gpus --qos <qos>` first — both the `Avail` column and the
+`GrpTRES` group cap for that type under the QOS you're about to pass, not
+just one or the other.
 
 Refuses an entrypoint that is absolute, contains `..`, has shell metacharacters,
 or does not exist in the clone.

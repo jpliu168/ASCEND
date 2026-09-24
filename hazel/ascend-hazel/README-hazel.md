@@ -24,6 +24,10 @@ builds** — every real computation runs inside a Slurm job.
 
 3. The ASCEND harness on Hazel (`~/bin`: hpcrun, hpcrepro, fetch-paper) —
    already there if any Hazel model was deployed before (shared home).
+4. Read NC State's own docs first: the
+   [Hazel Slurm QuickStart guide](https://hpc.ncsu.edu/QuickStart/QuickStart-slurm.php)
+   and Hazel's [Acceptable Use Policy](https://hpc.ncsu.edu/Accounts/GetAccess.php) — this harness enforces the operational
+   rules but does not replace either document.
 
 ## Install & run
 

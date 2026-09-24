@@ -96,17 +96,45 @@ echo
 # Ensure the project carries the ASCEND-HAZEL instructions and statusline.
 if [ ! -f "$WORKDIR/AGENTS.md" ] && [ ! -f "$WORKDIR/CLAUDE.md" ]; then
   # Resolve the Unity ID from the hazel alias (else $USER) and substitute it
-  # so /share/<user> and squeue -u <user> are correct.
+  # so squeue -u <user> is correct.
   UNITYID="$(awk '/^Host hazel$/{b=1;next} b&&/^Host /{b=0} b&&$1=="User"{print $2;exit}' "$HOME/.ssh/config" 2>/dev/null)"
   UNITYID="${UNITYID:-$USER}"
-  sed "s/@@UNITYID@@/$UNITYID/g" "$BUNDLE/AGENTS-hazel-template.md" > "$WORKDIR/AGENTS.md"
-  dim "    (added AGENTS.md to this project from the ascend-hazel template; user=$UNITYID)"
+  # Every writable Hazel share dir is $GROUP-scoped (/share/<group>/<unity>) --
+  # never bare /share/<unity>. Prefer the remote account's own $GROUP (the
+  # primary group -- fast, correct for the common case) over enumerating
+  # every group it belongs to, since a real account can belong to a dozen+
+  # for unrelated reasons and searching all of them is how "unambiguous"
+  # stopped being true in practice. Fall back to that full search,
+  # single-match only, if $GROUP's own path isn't there -- a student's
+  # primary group is sometimes a generic default, not their project group.
+  # Cold link or nothing resolving falls back to a placeholder rather than
+  # guess wrong.
+  SHAREDIR=""
+  if ssh -O check hazel >/dev/null 2>&1; then
+    remote='u="$(id -un)"; g="${GROUP:-$(id -gn)}"; d="/share/$g/$u"; if [ -d "$d" ] && [ -w "$d" ]; then printf "%s" "$d"; else c=""; n=0; for gg in $(id -Gn); do dd="/share/$gg/$u"; [ -d "$dd" ] && [ -w "$dd" ] && { c="$dd"; n=$((n+1)); }; done; [ "$n" -eq 1 ] && printf "%s" "$c"; fi'
+    SHAREDIR="$(ssh hazel "bash -lc '$remote'" 2>/dev/null || true)"
+  fi
+  SHAREDIR="${SHAREDIR:-/share/<your-group>/$UNITYID}"
+  sed -e "s/@@UNITYID@@/$UNITYID/g" -e "s#@@SHAREDIR@@#$SHAREDIR#g" \
+    "$BUNDLE/AGENTS-hazel-template.md" > "$WORKDIR/AGENTS.md"
+  dim "    (added AGENTS.md to this project from the ascend-hazel template; user=$UNITYID, share=$SHAREDIR)"
 fi
 if [ ! -f "$WORKDIR/.claude/settings.json" ]; then
   mkdir -p "$WORKDIR/.claude"
   printf '{\n  "statusLine": { "type": "command", "command": "~/.claude/ascend-hazel-statusline.sh" }\n}\n' \
     > "$WORKDIR/.claude/settings.json"
 fi
+
+# Lightweight, best-effort usage counter: one line per launch (timestamp,
+# unity ID, site, arrangement) to a shared log on Hazel, so adoption can be
+# counted without any content, prompts, or job data ever being logged. This
+# laptop has no direct access to /share, so it's written over ssh; BatchMode
+# means a cold link just silently skips logging rather than prompting for
+# Duo. Backgrounded and errors discarded -- never allowed to slow down or
+# break a real launch.
+( ssh -o BatchMode=yes hazel \
+    "printf '%s\t%s\t%s\t%s\n' \"\$(date -Is)\" \"\$(id -un)\" hazel-login ascend-hazel >> /share/help/aapeters/ascend-usage/usage.log" \
+) >/dev/null 2>&1 &
 
 cd "$WORKDIR"
 exec claude ${ARGS[@]+"${ARGS[@]}"}

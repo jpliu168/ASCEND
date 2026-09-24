@@ -1471,7 +1471,7 @@ def cmd_spec(args):
         "scheduler": "slurm",
         "account": None,
         "partition": args.partition,
-        "qos": None,
+        "qos": args.qos,
         "nodes": 1,
         "tasks_per_node": 1,
         "cpus_per_task": args.cpus,
@@ -2248,6 +2248,7 @@ def build_parser():
                    help="one argument for the entrypoint; repeat in order. "
                         "Use --arg=--flag form for anything starting with '-'")
     s.add_argument("--partition", default="interactive-gpu")
+    s.add_argument("--qos", default=None)
     s.add_argument("--gpus", type=int, default=1)
     s.add_argument("--gpu-type", default="h200")
     s.add_argument("--cpus", type=int, default=8)

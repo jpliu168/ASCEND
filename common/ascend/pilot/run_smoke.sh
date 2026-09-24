@@ -56,23 +56,59 @@ export HPCRUN_WS="${HPCRUN_ROOT}/smoke/pilot"
 
 hr "3/6  creating a new revision (happy path)"
 # The shipped spec is written for NCShare (interactive-gpu, h200, /work
-# paths). On any other site, write a site-adapted CPU-only copy: the smoke
-# is proving the HARNESS loop, which needs no GPU.
+# paths). Other sites get an adapted copy: a real GPU spec if the site has
+# a fast interactive-style GPU path (Hazel: gpu_partners/short_gpu, type
+# picked live from 'si --gpus' so the smoke test actually proves GPU access,
+# not just the harness loop), else CPU-only (the harness loop still proves
+# out fine with no GPU).
 SPEC="$PILOT/spec.json"
+MODE="ncshare"
 if ! python3 -c "
 import json, os
 s = json.load(open(os.environ['HPCRUN_ROOT'] + '/site.json'))
 raise SystemExit(0 if any(p['partition'] == 'interactive-gpu'
                           for p in s.get('partitions', [])) else 1)
 " 2>/dev/null; then
-  echo "    non-NCShare site: adapting smoke spec (CPU-only, partition ${ASCEND_PARTITION:-compute})"
-  python3 - "$PILOT/spec.json" "$PILOT/spec.local.json" <<'ADAPTPY'
+  MODE="cpu"
+  GPU_TYPE=""
+  if python3 -c "
+import json, os
+s = json.load(open(os.environ['HPCRUN_ROOT'] + '/site.json'))
+raise SystemExit(0 if any(p['partition'] == 'gpu_partners'
+                          for p in s.get('partitions', [])) else 1)
+" 2>/dev/null && command -v si >/dev/null 2>&1; then
+    # si's Avail column already nets out the GrpTRES cap (Avail = min(Total-
+    # Alloc, GrpTRES-Used)), confirmed live 2026-09-23, so it's a reliable
+    # pick -- occasional staleness right at the submit instant is acceptable
+    # here (a pending job is informative for a smoke test, not a silent
+    # failure, and not worth retry/fallback logic over).
+    GPU_TYPE="$(si --gpus --qos short_gpu 2>/dev/null \
+      | awk '$1=="gpu_partners" && $5+0>0 {print tolower($2); exit}')"
+  fi
+  [ -n "$GPU_TYPE" ] && MODE="hazel_gpu"
+
+  if [ "$MODE" = "hazel_gpu" ]; then
+    echo "    Hazel site: live-picked '$GPU_TYPE' (Avail>0 under gpu_partners/short_gpu)"
+  else
+    echo "    non-NCShare site: adapting smoke spec (CPU-only, partition ${ASCEND_PARTITION:-compute})"
+  fi
+
+  python3 - "$PILOT/spec.json" "$PILOT/spec.local.json" "$MODE" "${GPU_TYPE:-}" <<'ADAPTPY'
 import json, os, sys
 spec = json.load(open(sys.argv[1]))
 scratch = os.environ.get("ASCEND_SCRATCH") or os.path.expanduser("~")
-spec["partition"] = os.environ.get("ASCEND_PARTITION") or "compute"
-spec["gpus_per_node"] = 0
-spec.pop("gpu_type", None)
+mode, gpu_type = sys.argv[3], sys.argv[4]
+if mode == "hazel_gpu":
+    spec["partition"] = "gpu_partners"
+    spec["qos"] = "short_gpu"
+    spec["gpus_per_node"] = 1
+    spec["gpu_type"] = gpu_type
+    spec["cpus_per_task"] = 2
+    spec["walltime_minutes"] = 10
+else:
+    spec["partition"] = os.environ.get("ASCEND_PARTITION") or "compute"
+    spec["gpus_per_node"] = 0
+    spec.pop("gpu_type", None)
 spec["mem_per_node_gb"] = 8
 spec["environment"]["conda_env"] = None
 spec["environment"]["vars"]["TMPDIR"] = os.path.join(scratch, "tmp")
@@ -80,6 +116,23 @@ spec["entrypoint"] = ["python3", "run.py"]
 json.dump(spec, open(sys.argv[2], "w"), indent=2)
 ADAPTPY
   SPEC="$PILOT/spec.local.json"
+
+  # Hazel splits accounts into _cpu/_gpu halves; the pick above is type-
+  # agnostic (alphabetically first), which is wrong once a GPU spec is in
+  # play -- submitting it under the _cpu account is rejected at validate
+  # time ("is the CPU half of the tree, but this is a GPU job"). Re-pick an
+  # account matching what this spec actually needs.
+  WANT_SUFFIX="_cpu"; [ "$MODE" = "hazel_gpu" ] && WANT_SUFFIX="_gpu"
+  TYPED_ACCT="$(python3 -c "
+import json, os
+s = json.load(open(os.environ['HPCRUN_ROOT'] + '/site.json'))
+accts = sorted({a['account'] for a in s.get('accounts', []) if a.get('account')})
+m = [a for a in accts if a.endswith('$WANT_SUFFIX')]
+print(m[0] if m else '')")"
+  if [ -n "$TYPED_ACCT" ] && [ "$TYPED_ACCT" != "$ACCT" ]; then
+    echo "    re-picked account for a $WANT_SUFFIX job: $TYPED_ACCT"
+    ACCT="$TYPED_ACCT"
+  fi
 fi
 SETS=(--set 'environment.vars.FAIL_MODE="none"')
 [ -n "$ACCT" ] && SETS+=(--set "account=\"$ACCT\"")
@@ -147,7 +200,36 @@ cat <<EOF
     Workspace : ${HPCRUN_WS}
     Ledger    : hpcrun ledger --tail 30
     Budget    : hpcrun status
+EOF
+case "$MODE" in
+  hazel_gpu)
+    cat <<EOF
+
+This ran a live GPU spec on Hazel (gpu_partners/short_gpu, type '$GPU_TYPE',
+picked from 'si --gpus --qos short_gpu' at submit time). If step 6 printed
+succeeded=True and step 6's GPU line showed a real CUDA_VISIBLE_DEVICES
+value (not <unset>), the harness proves out on real Hazel GPU access, not
+just the harness loop. GPU availability changes by the hour -- a pending
+job here means nothing was free at submit time, not a harness fault; check
+'sqos' / 'si --gpus --qos short_gpu' and retry.
+EOF
+    ;;
+  cpu)
+    cat <<EOF
+
+This ran the site-adapted CPU-only spec (partition ${ASCEND_PARTITION:-compute},
+no GPU) -- the smoke test proves the harness loop, not GPU access, so there
+is no device name to look for here. If step 6 printed succeeded=True, the
+harness works end to end on this site and you can point it at real work.
+For a GPU check, pick a type live with 'sqos' / 'si --gpus --qos <qos>' and
+run a real GPU revision -- this smoke test does not exercise gres selection.
+EOF
+    ;;
+  *)
+    cat <<EOF
 
 If step 6 printed succeeded=True and a real H200 device name, the harness
 works end to end and you can point it at real work.
 EOF
+    ;;
+esac

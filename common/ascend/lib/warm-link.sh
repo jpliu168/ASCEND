@@ -78,11 +78,17 @@ warm_link(){
         printf '\n' >&2
         echo "  (still cold after ~5 minutes -- falling back to the manual steps)" >&2
       else
-        echo "  (couldn't open a terminal automatically on this platform -- manual steps:)" >&2
+        echo "  Couldn't open a terminal window automatically here -- some Mac" >&2
+        echo "  terminal apps (iTerm2 etc.) need Automation permission to control" >&2
+        echo "  Terminal.app. Terminal.app itself always works, so try running this" >&2
+        echo "  from Terminal instead. Or, just authenticate by hand:" >&2
       fi ;;
   esac
-  echo "  Open a NEW terminal yourself and run:      ssh $al" >&2
-  echo "  Complete any password + Duo prompt (a shell on the far side = success)." >&2
+  echo "  1. Open a new terminal window" >&2
+  echo "  2. Run:  ssh $al" >&2
+  echo "  3. Enter your password, then approve Duo" >&2
+  echo "  4. Once you see a shell prompt on the far side, come back to THIS terminal" >&2
+  echo "  5. Press Enter below" >&2
   wl_ask '  Press Enter here once that is done' >/dev/null
   if wl_is_warm "$al"; then wl_say "'$al' link is warm."; return 0; fi
   return 1

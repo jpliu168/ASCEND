@@ -14,6 +14,14 @@
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
 
+# A zip download, Windows share, or some git clones can strip execute bits.
+# This script can be run standalone (not just via the top-level install.sh,
+# which does this same repair) and symlinks straight into ~/.local/bin below,
+# so repair now -- otherwise the symlinked launcher fails with a bare
+# "permission denied" the first time it's run, with no clue why.
+find "$ROOT" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
+find "$ROOT" -type d -name bin -exec sh -c 'chmod +x "$1"/* 2>/dev/null || true' _ {} \; 2>/dev/null || true
+
 say(){ printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn(){ printf '\033[33m warn:\033[0m %s\n' "$*" >&2; }
 ask(){ local p="$1" d="${2-}" a; printf '%s%s: ' "$p" "${d:+ [$d]}" >&2; IFS= read -r a </dev/tty || true; printf '%s' "${a:-$d}"; }
@@ -109,7 +117,9 @@ warm_link hazel "(answer password + Duo in the window that opens)" \
   || { echo "link still cold -- get 'ssh hazel true' working, then re-run."; exit 1; }
 
 # 3. deploy the harness + Hazel hpc-slurm skill to the cluster (file install
-#    on the login node -- no compute -- into ~/bin, ~/.claude, /share/<user>/agents)
+#    on the login node -- no compute -- into ~/bin, ~/.claude,
+#    /share/<group>/<user>/agents; deploy-hazel.sh lets install.sh auto-detect
+#    the group unless ASCEND_SHARE is set)
 say "Installing the harness + skills on Hazel..."
 HAZEL_REMOTE=hazel bash "$HERE/deploy-hazel.sh"
 
@@ -126,7 +136,10 @@ for l in "$HERE/ascend-hazel/bin/ascend-hazel" \
 done
 case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) echo "  NOTE: add ~/.local/bin to PATH:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;; esac
 
-say "Done. Hazel user: $UNITY   (cluster work dir: /share/$UNITY/agents)"
+# Read back the real detected path rather than re-guessing it -- install.sh
+# (run by deploy-hazel.sh above) exported it into ~/.bashrc on the node.
+REMOTE_SHARE="$(ssh hazel 'bash -lc "printf %s \"\${ASCEND_SHARE:-}\""' 2>/dev/null || true)"
+say "Done. Hazel user: $UNITY   (cluster work dir: ${REMOTE_SHARE:-<see 'site:' line above>}/agents)"
 echo "   Check:      ascend-hazel --check     (socket probe + login node / slurm / tools)"
 echo "   Start it:   cd <project> && ascend-hazel"
 echo "   Remember:   the login node is for scheduling + env builds ONLY;"

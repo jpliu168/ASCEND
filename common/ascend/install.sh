@@ -8,7 +8,7 @@
 #   bash ~/agents/<resource>/deploy.sh    # from the Mac; runs this remotely
 #
 # Installs into ~/bin, ~/.claude, ~/.ascend and the site scratch root
-# (auto-detected: NCShare /work/$USER, Hazel /share/$GROUP/agents). Touches
+# (auto-detected: NCShare /work/$USER, Hazel /share/$GROUP/$USER/agents). Touches
 # nothing else. The knowledge base lives in ~/.ascend: scratch is purged
 # after 75 days, and a memory that evaporates is worse than none.
 set -Eeuo pipefail
@@ -16,16 +16,40 @@ set -Eeuo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---- site detection ---------------------------------------------------------
 # NCShare: scratch is /work/$USER (75-day purge), partition "common".
-# Hazel (NCSU): scratch is /share/$GROUP/agents (30-day purge), partition
+# Hazel (NCSU): scratch is /share/$GROUP/$USER/agents (30-day purge), partition
 # "compute"; $HOME has a hard 15 GB / 10K-file quota, so nothing big or
 # file-heavy (node_modules, conda envs) may live there -- envs and software
 # belong in /usr/local/usrapps/$GROUP (writable from LOGIN nodes only).
 if [ -n "${ASCEND_SCRATCH:-}" ]; then
-  WORK="$ASCEND_SCRATCH"; SHARE="$(dirname "$WORK")"; SITE="custom"; PURGE_DAYS="site-specific"
-  DEFAULT_PART="${ASCEND_PARTITION:-common}"
-  # ASCEND_HERE=1 (passed by e.g. the hurricane deploy for a no-scheduler box) makes
-  # the agent run in place instead of trying to srun/sbatch. Other sites do not pass it.
-  IA_PART=""; IA_QOS=""; IA_TIME=""; AGENT_HERE="${ASCEND_HERE:-}"
+  WORK="$ASCEND_SCRATCH"; SHARE="${ASCEND_SHARE:-$(dirname "$WORK")}"; SITE="custom"; PURGE_DAYS="site-specific"
+  # An explicit scratch path overrides WHERE things live, but says nothing on
+  # its own about WHICH cluster this is -- and DEFAULT_PART/IA_*/AGENT_HERE
+  # silently become the default --partition for both the smoke test and the
+  # `ascend`/`claude-node` interactive launchers. Guessing NCShare's "common"
+  # here regardless of the real site is exactly how a job on Hazel ends up
+  # requesting a partition that doesn't exist, and AGENT_HERE staying unset
+  # is how `ascend` tries to srun an allocation instead of running in place
+  # on a VCL node that's already login-class and sanctioned for it. So still
+  # detect the real site from the filesystem (the caller's ASCEND_SCRATCH
+  # override doesn't change that /share vs /work/$USER exists), and let any
+  # ASCEND_* env var the caller already set win over that detected default --
+  # this is how e.g. the hurricane deploy (a no-scheduler box) passes
+  # ASCEND_HERE=1 explicitly and keeps working unchanged.
+  if [ -d /share ]; then
+    DEFAULT_PART="${ASCEND_PARTITION:-compute}"
+    IA_PART="${ASCEND_INTERACTIVE_PARTITION:-compute_partners}"
+    IA_QOS="${ASCEND_INTERACTIVE_QOS:-short}"
+    IA_TIME="${ASCEND_TIME:-02:00:00}"
+    AGENT_HERE="${ASCEND_HERE:-1}"
+  elif [ -d "/work/${USER}" ]; then
+    DEFAULT_PART="${ASCEND_PARTITION:-common}"
+    IA_PART=""; IA_QOS=""; IA_TIME=""; AGENT_HERE="${ASCEND_HERE:-}"
+  else
+    DEFAULT_PART="${ASCEND_PARTITION:-common}"
+    IA_PART=""; IA_QOS=""; IA_TIME=""; AGENT_HERE="${ASCEND_HERE:-}"
+    echo "note: custom scratch path but neither /share nor /work/\$USER exists here --" >&2
+    echo "      guessing partition '$DEFAULT_PART'. Verify with: sqos" >&2
+  fi
 elif [ -d "/work/${USER}" ]; then
   WORK="/work/${USER}"; SHARE="/work/${USER}"; SITE="ncshare"; PURGE_DAYS=75; DEFAULT_PART="common"
   IA_PART=""; IA_QOS=""; IA_TIME=""; AGENT_HERE=""
@@ -37,19 +61,54 @@ elif [ -d /share ]; then
   # Hazel compute nodes have NO internet egress (verified 2026-09-09, curl
   # exit 28 to api.anthropic.com): the agent runs on the login node.
   AGENT_HERE=1
-  # A faculty member's writable dir is /share/$USER; a student added to a
-  # faculty project has /share/<project>/$USER (e.g. /share/riverdelta/davidliu).
-  # Prefer a dir literally named after the user; the deepest writable match wins.
+  # Every writable Hazel share directory is $GROUP-scoped: /share/<group>/$USER,
+  # whether <group> is a faculty member's own group (e.g. /share/aapeters/aapeters)
+  # or a project group a student was added to (e.g. /share/riverdelta/davidliu).
+  # Prefer $GROUP (the account's primary group) as the fast, direct path rather
+  # than enumerating every group the account belongs to: a real account can
+  # belong to a dozen+ groups for unrelated reasons (software licenses,
+  # cluster-access, other PIs' projects it has courtesy access to), and
+  # searching all of them for a writable /share/<group>/$USER is how
+  # "unambiguous" stopped being true in practice (one real account here had
+  # 3 genuine matches). Only fall back to the full search if $GROUP's own
+  # path isn't there, since a student's primary group is sometimes a
+  # generic default rather than their actual project group.
   SHARE=""
-  for c in "/share/$USER" /share/*/"$USER"; do
-    [ -d "$c" ] && [ -w "$c" ] && SHARE="$c"
-  done
-  if [ -z "$SHARE" ]; then   # fall back to a writable group dir
-    for g in $(id -Gn); do [ -d "/share/$g" ] && [ -w "/share/$g" ] && { SHARE="/share/$g"; break; }; done
-  fi
+  PGROUP="${GROUP:-$(id -gn)}"
+  c="/share/$PGROUP/$USER"
+  [ -d "$c" ] && [ -w "$c" ] && SHARE="$c"
   if [ -z "$SHARE" ]; then
-    echo "ERROR: no writable /share dir found for $USER (tried /share/$USER and /share/*/$USER)." >&2
-    echo "       Pass it explicitly:  ASCEND_SCRATCH=/share/<proj>/$USER/agents  bash install.sh" >&2
+    matches=()
+    for g in $(id -Gn); do
+      c="/share/$g/$USER"
+      [ -d "$c" ] && [ -w "$c" ] && matches+=("$c")
+    done
+    if [ "${#matches[@]}" -eq 1 ]; then
+      SHARE="${matches[0]}"
+    elif [ "${#matches[@]}" -gt 1 ]; then
+      echo "ERROR: \$GROUP ($PGROUP) has no writable /share/$PGROUP/$USER, and" >&2
+      echo "       multiple other writable /share/<group>/$USER dirs exist:" >&2
+      printf '  %s\n' "${matches[@]}" >&2
+      echo "       Pick one explicitly:  ASCEND_SCRATCH=<path>/agents  bash install.sh" >&2
+      exit 1
+    fi
+  fi
+  # No bare /share/<group> fallback: a writable /share/<group> with no
+  # per-user subdirectory is not a substitute for /share/<group>/$USER --
+  # a writable group directory can exist for reasons that have nothing to do
+  # with this account's own working space (shared with other members, a
+  # legacy/admin share, etc.), and silently using it risks landing the agent
+  # in the wrong directory instead of failing loudly. If no writable
+  # /share/<group>/$USER exists for any group, this Hazel account is not set
+  # up correctly for ASCEND -- stop here rather than guess, so the caller
+  # (setup-hazel.sh / setup.sh) can report the failure and move on to
+  # another resource (NCShare, hurricane) instead.
+  if [ -z "$SHARE" ]; then
+    echo "ERROR: this Hazel account is not set up correctly for ASCEND -- no" >&2
+    echo "       writable /share/<group>/$USER directory was found for $USER" >&2
+    echo "       (checked groups: $(id -Gn))." >&2
+    echo "       Ask HPC support to confirm your /share allocation, or pass" >&2
+    echo "       it explicitly:  ASCEND_SCRATCH=/share/<group>/$USER/agents  bash install.sh" >&2
     exit 1
   fi
   WORK="$SHARE/agents"
@@ -77,7 +136,7 @@ say "site: $SITE   share: ${SHARE:-?}   scratch: $WORK   (purge: $PURGE_DAYS day
 # (deploy.sh / the Mac passes ASCEND_SCRATCH, meaning the user already chose).
 if [ -z "${ASCEND_SCRATCH_CONFIRMED:-}" ] && [ -z "${ASCEND_SCRATCH:-}" ] && [ "$SITE" = "hazel" ] && [ -t 0 ]; then
   printf 'Your Hazel working directory is detected as: %s\n' "$SHARE"
-  printf '  (faculty: /share/<unityID>   student: /share/<project>/<unityID>)\n'
+  printf '  (path is /share/<group>/<unityID> -- your own group or a project group)\n'
   printf '  Press Enter to use it, or type a different /share path: '
   IFS= read -r _ans || true
   if [ -n "$_ans" ]; then SHARE="$_ans"; WORK="$SHARE/agents"; fi
@@ -308,7 +367,7 @@ fi
 # --------------------------------------------------------------- probe -----
 export HPCRUN_ROOT="$WORK/agent-workspaces"
 say "probing the cluster"
-if "$BIN/hpcrun" site --probe > /tmp/hpcrun_probe.$$ 2>&1; then
+if "$BIN/hpcrun" site --probe > "$WORK/tmp/hpcrun_probe.$$" 2>&1; then
   python3 - "$WORK/agent-workspaces/site.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
@@ -320,7 +379,7 @@ print("    container : %s" % (s.get("container_runtime") or "(none)"))
 print("    NCShare   : %s" % ("recognized" if s.get("known_site", {}).get("matched") else "not matched"))
 PY
 else
-  warn "site probe failed; see /tmp/hpcrun_probe.$$"
+  warn "site probe failed; see $WORK/tmp/hpcrun_probe.$$"
 fi
 
 # ------------------------------------------------------------- claude ------

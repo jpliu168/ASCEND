@@ -5,6 +5,23 @@ Computing Engine for Novel Discovery) with the agent on Paul's Mac and compute
 on NC State's Hazel HPC cluster. Greet as ASCEND-HAZEL. The agent reasons here;
 the cluster acts, through a controlled layer.
 
+Authoritative references, if the user asks or a rule below needs checking
+against the source: the
+[Hazel Slurm QuickStart guide](https://hpc.ncsu.edu/QuickStart/QuickStart-slurm.php)
+and Hazel's [Acceptable Use Policy](https://hpc.ncsu.edu/Accounts/GetAccess.php). This file summarizes the operational
+rules but does not replace either.
+
+## Quota check — run FIRST, every session
+
+- Before any real work (environment builds, `sbatch`, or writing files),
+  run `ssh hazel 'quota_display'`. **Warnings (🟡) are fine — proceed, and
+  mention cleanup is recommended.** A **critical (🔴, over-quota) result on
+  any filesystem is a hard stop**: do not build environments, submit jobs,
+  or write files until the user has resolved it and a re-run comes back
+  clean. `ssh hazel 'quota_display --warning'` gives a compact view of
+  only the warning/critical lines. The login node has native GPFS mounts,
+  so unlike the VCL arrangement this check always returns real numbers.
+
 ## Remote execution policy
 
 - **The `hazel` ssh alias is the ONLY route to Hazel.** It is a multiplexed
@@ -33,20 +50,32 @@ the cluster acts, through a controlled layer.
   several commands into one call (`cmd1 && cmd2 && cmd3`) instead of many
   small calls.
 - Each call is a fresh login shell: absolute paths
-  (`/share/@@UNITYID@@/...`, `~/bin/...`) or `cd ... &&` chains; conda envs
+  (`@@SHAREDIR@@/...`, `~/bin/...`) or `cd ... &&` chains; conda envs
   must be activated inside the same command
-  (`ssh hazel 'source ~/.bashrc && conda activate /share/@@UNITYID@@/... && ...'`).
+  (`ssh hazel 'source ~/.bashrc && conda activate @@SHAREDIR@@/... && ...'`).
 
 ## Slurm on Hazel (all compute goes here)
 
 - Accounts: `@@UNITYID@@_cpu`, `@@UNITYID@@_gpu`. DefaultTime 1h.
-- Partitions/QOS: compute (normal 4d, long 10d), compute_partners (short 2h
-  default; scavenger preempts), gpu (4d), gpu_partners (default short_gpu), xfer.
+- Partitions/QOS (names are stable; wall-time and GPU caps drift — `ssh hazel
+  'sqos'` is the live table, not this line): compute (normal 4d, long 10d),
+  compute_partners (short 2h default; scavenger 4d, preempts), gpu (3d),
+  gpu_partners (short_gpu 2h default; scavenger_gpu 4d), xfer (4d).
 - **Typed gres is MANDATORY** (`--gres=gpu:l40s:1`, never bare `gpu:1`).
-  gpu: h100, l40, a100, a30, p100, rtx_2080; gpu_partners adds h200 and l40s
-  (60 of them — l40s + short_gpu allocates near-instantly).
-- Pick GPUs from live capacity, don't guess: `ssh hazel 'sqos'` and
-  `ssh hazel 'si --gpus --qos short_gpu'`.
+  Total capacity (drifts) — gpu: h100, l40, a100, a30, p100, rtx_2080;
+  gpu_partners: h200, l40s, rtx_6000_pro (uncapped by QOS, easy to miss),
+  plus a100/a10/h100 but only via `scavenger_gpu` (`short_gpu` zero-caps
+  h100/a100 group usage). **Never treat l40s (or any type) as "the cheap
+  one that allocates near-instantly" — its large total allocation is not
+  the same as free right now**, and it is routinely fully allocated.
+- **Always** pick GPUs from live capacity, never a remembered type:
+  `ssh hazel 'sqos'` and `ssh hazel 'si --gpus --qos short_gpu'` (or
+  `--qos gpu`) — check BOTH `Avail` (from `si --gpus`) AND the `GrpTRES`
+  group cap for that type under the QOS you're requesting (from `sqos`).
+  `Avail > 0` alone is not enough — a type can show availability and still
+  be zero-capped under that specific QOS, landing your job pending on
+  `QOSGrpGRES` instead of running. Re-check at submission time, not
+  whatever worked last time.
 - Job scripts: `module load cuda` (default 13.2) before GPU code — an old CUDA
   on a new GPU stalls silently; check this FIRST if a GPU log goes quiet.
   GPU timing needs `torch.cuda.synchronize()`.
@@ -58,28 +87,52 @@ the cluster acts, through a controlled layer.
 
 - `/home/@@UNITYID@@` — 15 GB / 10,000 files. Scripts and configs ONLY; never
   conda envs or pip caches (`quota_display` to check).
-- `/share/@@UNITYID@@` — 20 TB scratch, 30-day-access purge. ASCEND root:
-  `/share/@@UNITYID@@/agents`. All working data, envs, staging live here.
+- `@@SHAREDIR@@` — 20 TB scratch, 30-day-access purge. ASCEND root:
+  `@@SHAREDIR@@/agents`. All working data, envs, staging live here.
 - `/rsstu` — third shared FS, also visible on compute nodes.
 - `/usr/local/usrapps/<group>` — long-lived/shared envs only when the user
   asks (compute nodes cannot write there).
 
 ## Environment builds (on the login node — keep them polite)
 
-- `~/.condarc` `pkgs_dirs` must point under `/share/@@UNITYID@@` (never $HOME);
-  pip `global.cache-dir` → `/share/@@UNITYID@@/pip/cache`.
+Reference (Hazel side only, never the laptop):
+https://hpc.ncsu.edu/Software/Apps.php?app=Conda#loading and
+https://hpc.ncsu.edu/Software/Apps-slurm.php?app=Python#pip-cache.
+
+- `~/.condarc` `pkgs_dirs` must point under `@@SHAREDIR@@` (never $HOME);
+  pip `global.cache-dir` → `@@SHAREDIR@@/pip/cache`.
+- **On Hazel (never your laptop's own `~/.condarc`)**: the remote account's
+  `~/.condarc` must also have a channel enabled, or `conda create` fails
+  with `NoChannelsConfiguredError`. Check with
+  `ssh hazel "conda config --show channels"` — `channels: []` means a
+  `channels:` block with every line commented out, the usual cause; fix
+  with `ssh hazel "sed -i 's/^#  - conda-forge\$/  - conda-forge/' ~/.condarc"`.
+  Enable `conda-forge`, never `defaults` (Anaconda Inc.'s `defaults` channel
+  needs a paid org license; conda-forge doesn't).
 - ALWAYS `conda env create --prefix ./env_X -f X.yml` — never bare `-n`
   (that lands in $HOME and silently fills the quota). YAML-driven solves.
-- `nice` heavy solves/compiles, and if a build turns into real computation
-  (long compiles of large codebases), move it to a compute job or suggest the
+- **Cap every solve/compile/large git op to 4 cores.** SSH has no option
+  for this (it only carries the command, it doesn't limit what runs); the
+  cap is applied inside the remote command with `taskset`, which is a hard
+  OS-level pin, not a request the command can ignore:
+  ```
+  HAZEL_THROTTLE='taskset -c 0-3 nice -n 10 env OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 NUMEXPR_NUM_THREADS=4 VECLIB_MAXIMUM_THREADS=4 NUMBA_NUM_THREADS=4'
+  ssh hazel "$HAZEL_THROTTLE conda env create --prefix @@SHAREDIR@@/agents/<proj>/env_X -f X.yml"
+  ```
+  This is a login-node-only rule — the shared box is what needs protecting.
+  It does not apply once work is running on Hazel VCL (a personal, exclusive
+  reservation) or inside a Slurm job (already resource-bounded by `--cpus-per-task`).
+- If a build turns into real computation (long compiles of large codebases),
+  the 4-core cap will make it slow rather than fast — that's the signal to
+  move it to a compute job or suggest the
   VCL node instead.
 
 ## Data and results
 
 - Large datasets stay on the cluster; operate remotely, bring back only small
-  results, logs, or figures: `scp hazel:/share/@@UNITYID@@/<file> .`
+  results, logs, or figures: `scp hazel:@@SHAREDIR@@/<file> .`
 - Local repo is the source of truth for code; sync with
-  `rsync -av <local>/ hazel:/share/@@UNITYID@@/agents/<proj>/` before remote runs.
+  `rsync -av <local>/ hazel:@@SHAREDIR@@/agents/<proj>/` before remote runs.
 - `/share` purges after 30 days without access; durable outputs go to the
   cluster `$HOME` (small) or back to the Mac.
 

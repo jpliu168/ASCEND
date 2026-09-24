@@ -44,6 +44,11 @@ STEP 0 — PREREQUISITES
     Hazel     Unity ID in an HPC project (ssh <unityID>@login.hpc.ncsu.edu works)
     NCShare   an NCShare username with a /work/<user> directory
     hurricane an account on the box (MEAS)
+* If you're setting up Hazel, read NC State's own docs first: the Hazel Slurm
+  QuickStart guide (https://hpc.ncsu.edu/QuickStart/QuickStart-slurm.php) and
+  Hazel's Acceptable Use Policy (https://hpc.ncsu.edu/Accounts/GetAccess.php).
+  This harness enforces the operational rules (login-node use, typed gres,
+  storage locations) day to day but does not replace either document.
 * macOS, Linux, or Windows + WSL (Ubuntu). Windows: do EVERYTHING inside the
   Ubuntu shell; pull the zip from /mnt/c inside Ubuntu; never work under
   /mnt/c. Fix stripped permissions with:
@@ -135,5 +140,17 @@ Key per-resource rules the agents enforce:
 Advanced (Hazel): if you need the agent to keep working with the laptop
 closed, the separate ASCEND-VCL package runs the agent on a personal HPC-VCL
 node inside tmux (ascend-vcl --tmux). Both Hazel models coexist.
+
+--------------------------------------------------------------------------------
+STEP 4 — USAGE LOGGING (Hazel)
+--------------------------------------------------------------------------------
+
+Each `ascend-hazel` launch appends one line to a shared, append-only log on
+Hazel (/share/help/aapeters/ascend-usage/usage.log): a timestamp, your Unity
+ID, the site, and the launcher used. That's it -- no prompts, code, file
+paths, or job data are ever logged. This exists purely to measure adoption,
+to justify continued time and support for maintaining this tool. It's
+best-effort and never blocks or fails a launch -- a cold `hazel` link just
+silently skips logging.
 
 ================================================================================

@@ -60,9 +60,9 @@ You are the ASCEND router. Pick ONE resource for the user's job from a live snap
 Resource profiles:
 - hurricane: ONE RTX PRO 6000 Blackwell (~96 GB), NO scheduler, agent runs on the box, zero queue. Best for: one-GPU jobs that fit ~96 GB, interactive/short-to-medium, when you want it NOW and its GPU is free. Shared by courtesy.
 - ncshare: Slurm cluster, H200 GPUs, laptop-driven (agent on the Mac, compute via proxy). Best for: batch/long single-GPU jobs, needing H200, or when hurricane is busy. Jobs may queue.
-- hazel: NCSU Hazel Slurm cluster, many typed GPUs (l40s/h100/a100), laptop-driven via the multiplexed login-node alias (scheduling + env builds only there; all compute via sbatch). Best for: multi-GPU, a specific GPU type, or very long queued jobs. Cold link needs one password+Duo first.
+- hazel: NCSU Hazel Slurm cluster, typed GPUs, laptop-driven via the multiplexed login-node alias (scheduling + env builds only there; all compute via sbatch). Hazel has two GPU QOS options that trade wall-time against availability -- when hazel's snapshot entry is warm, its "sqos" field is this account's LIVE wall-time limit and GRES group cap per QOS (right now, not a remembered value), and "gpu_avail_short_gpu" / "gpu_avail_gpu_qos" are LIVE per-type GPU availability under each. Read the job's stated duration against sqos's own wall-time column yourself before recommending hazel for a QOS-bound job -- never assume either QOS's limit, it drifts. Best for: multi-GPU, a specific GPU type, a duration that doesn't fit hurricane/ncshare, or a very long queued job. Cold link needs one password+Duo first.
 - local: no GPU needed and light -> just run on the Mac.
-Rules: match GPU need, VRAM, #GPUs, GPU type, and duration to the profile; then break ties by the snapshot (free_now beats queued; a warm hazel beats a cold one for a quick job). If the job needs a GPU and hurricane.free_now and it fits one ~96 GB card and it is not a huge multi-GPU/very-long run, prefer hurricane. Needs H200 -> ncshare. Needs multi-GPU or a specific non-Blackwell type -> hazel.
+Rules: match GPU need, VRAM, #GPUs, GPU type, and duration to the profile; for hazel, check the job's duration against its live sqos wall-time limits before recommending it, not an assumed number. Then break ties by the snapshot (free_now beats queued; a warm hazel beats a cold one for a quick job). If the job needs a GPU and hurricane.free_now and it fits one ~96 GB card and it is not a huge multi-GPU/very-long run, prefer hurricane. Needs H200 -> ncshare. Needs multi-GPU or a specific non-Blackwell type -> hazel, chosen against its live sqos/si data.
 Output ONLY a single JSON object, no prose, no code fence:
 {"resource":"hurricane|ncshare|hazel|local","reason":"one sentence tying job nature + live availability","warnings":"empty or a caveat (e.g. hazel cold needs Duo; hurricane GPU busy)"}
 POL
@@ -90,26 +90,42 @@ if m:
         d=json.loads(m.group(0)); res=d.get("resource"); reason=d.get("reason"); warn=d.get("warnings")
     except Exception: pass
 if res not in ("hurricane","ncshare","hazel","local"):
-    # deterministic fallback
+    # Deterministic fallback -- fires whenever the AI hand-off didn't return a
+    # usable answer (claude -p failed, timed out, or returned non-JSON). It
+    # MUST actually check live reachability for every candidate, not just the
+    # ones a keyword happens to name -- an earlier version's final catch-all
+    # hardcoded "hurricane" with no reachability check at all, so it could
+    # recommend an unreachable resource while a genuinely available one
+    # (hazel, most often) sat unexamined in the very snapshot it just took.
     gpu = any(k in job for k in ("gpu","cuda","train","inference","torch","model","fine-tune","finetune"))
     multi = any(k in job for k in ("multi-gpu","multi gpu","2 gpu","4 gpu","8 gpu","several gpu"))
     h200 = "h200" in job
     typed = any(k in job for k in ("h100","a100","l40"))
     long = any(k in job for k in ("hour","overnight","day","long","week"))
-    hur = snap.get("hurricane",{}); nc = snap.get("ncshare",{})
+    hur = snap.get("hurricane",{}); nc = snap.get("ncshare",{}); hz = snap.get("hazel",{})
+    hur_up = hur.get("reachable") or hur.get("free_now")
+    nc_up  = nc.get("reachable")  or nc.get("free_now")
+    hz_up  = hz.get("reachable")  or hz.get("warm") or hz.get("free_now")
+
     if not gpu:
         res, reason = "local", "no GPU needed — light enough for the Mac"
-    elif multi or typed:
-        res, reason = "hazel", "needs multiple/typed GPUs — Hazel's queue has them"
-    elif h200:
+    elif (multi or typed) and hz_up:
+        res, reason = "hazel", "needs multiple/typed GPUs — Hazel has them"
+    elif h200 and nc_up:
         res, reason = "ncshare", "needs H200 — that's NCShare"
     elif hur.get("free_now") and not long:
         res, reason = "hurricane", "one-GPU job and hurricane's Blackwell is free now (no queue)"
-    elif nc.get("reachable"):
-        res, reason = "ncshare", ("hurricane busy or long run — NCShare H200 " + str(nc.get("note","")))
+    elif hz.get("free_now"):
+        res, reason = "hazel", "Hazel is warm with idle/mixed GPU capacity available now"
+    elif nc_up:
+        res, reason = "ncshare", "NCShare reachable" + (" — H200s idle" if nc.get("free_now") else " (may queue)")
+    elif hz_up:
+        res, reason = "hazel", "Hazel reachable" + ("" if hz.get("free_now") else " (may queue)")
+    elif hur_up:
+        res, reason = "hurricane", "hurricane reachable but its GPU is busy — best remaining option"
     else:
-        res, reason = "hurricane", "fallback: single-GPU box"
-    warn = warn or ""
+        res, reason = "hazel", "no resource's live status could be confirmed; defaulting to hazel -- verify manually before submitting"
+    warn = warn or "AI hand-off did not return a usable answer; used the live-availability fallback rule, not model reasoning"
 print(json.dumps({"resource":res,"reason":reason or "","warnings":warn or ""}))
 PY
 )"

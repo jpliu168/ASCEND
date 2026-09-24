@@ -64,9 +64,12 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; the
   echo "         The API key wins, so this session bills per token despite" >&2
   echo "         your subscription. Unset ANTHROPIC_API_KEY to use the plan." >&2
 elif [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  echo "warning: no credential found (neither CLAUDE_CODE_OAUTH_TOKEN nor" >&2
-  echo "         ANTHROPIC_API_KEY). Run 'claude setup-token' on a machine" >&2
-  echo "         with a browser, or see install.sh for the API-key route." >&2
+  echo "note: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY env var set." >&2
+  echo "      Harmless if you're already logged in via 'claude login' or an" >&2
+  echo "      org/Team plan -- this check can't see that. Only act on this" >&2
+  echo "      if 'claude' itself then prompts you to log in: run" >&2
+  echo "      'claude setup-token' on a machine with a browser, or see" >&2
+  echo "      install.sh for the API-key route." >&2
 fi
 
 echo "==> allocation: -p $PART -c $CPUS --mem=$MEM -t $TIME"

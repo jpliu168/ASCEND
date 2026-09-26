@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""ascend-probe — a live snapshot of what's available RIGHT NOW across the three
-ASCEND resources, so the router can pick one. Read-only; nothing is submitted.
+"""ascend-probe — a live snapshot of what's available RIGHT NOW across all
+ASCEND resources — the three built-ins plus any custom sites the user linked
+via `./install.sh add` (registered in ~/.ascend/sites.json) — so the router
+can pick one. Read-only; nothing is submitted.
 
   ascend-probe            human-readable table
   ascend-probe --json     machine-readable JSON (used by ascend-all)
@@ -156,15 +158,89 @@ def probe_hazel():
     return r
 
 
+def load_custom_sites():
+    """Custom sites registered by custom/setup-custom.sh -> ~/.ascend/sites.json:
+    {"<name>": {"remote": "<ssh alias>", "kind": "slurm|gpu|cpu", "desc": ...}}"""
+    try:
+        reg = json.load(open(os.path.expanduser("~/.ascend/sites.json")))
+        return {k: v for k, v in reg.items()
+                if isinstance(v, dict) and v.get("remote")} if isinstance(reg, dict) else {}
+    except Exception:
+        return {}
+
+
+def probe_custom(name, cfg):
+    """Generic probe for a user-linked site: Slurm -> sinfo/squeue; GPU box ->
+    nvidia-smi (any card mostly free counts); CPU box -> load average."""
+    kind = cfg.get("kind", "cpu")
+    alias = cfg["remote"]
+    r = {"resource": name, "kind": cfg.get("desc") or ("custom " + kind),
+         "custom": True, "reachable": False, "free_now": False, "note": ""}
+    if kind == "slurm":
+        rc, out, err = run(SSH + [alias,
+            "sinfo -h -o '%P %a %D %t' 2>/dev/null | head -20; "
+            "echo '::'; squeue -h -u \"$USER\" 2>/dev/null | wc -l"], timeout=20)
+        if rc != 0:
+            r["note"] = "unreachable (" + (err or "ssh failed")[:60] + ")"
+            return r
+        r["reachable"] = True
+        part, _, queued = out.partition("::")
+        idle = sum(1 for ln in part.splitlines()
+                   if ln.strip() and ln.split()[-1].startswith(("idle", "mix")))
+        qd = queued.strip() or "0"
+        r["nodes_idle_or_mixed"] = idle
+        r["your_queue"] = qd
+        r["free_now"] = idle > 0
+        r["note"] = ("%d node(s) idle/mixed, your queue=%s" % (idle, qd) if idle
+                     else "nodes busy; your queue=%s (jobs will wait)" % qd)
+        return r
+    if kind == "gpu":
+        q = ("nvidia-smi --query-gpu=name,memory.total,memory.used,utilization.gpu "
+             "--format=csv,noheader,nounits")
+        rc, out, err = run(SSH + [alias, q], timeout=20)
+        if rc != 0 or not out:
+            r["note"] = "unreachable (" + (err or "no gpu data")[:60] + ")"
+            return r
+        r["reachable"] = True
+        gpus, free_idx = [], []
+        for i, ln in enumerate(out.splitlines()):
+            try:
+                gname, tot, used, util = [x.strip() for x in ln.split(",")]
+                tot, used, util = float(tot), float(used), float(util)
+            except ValueError:
+                continue
+            gpus.append({"gpu": gname, "vram_total_gb": round(tot/1024, 1),
+                         "vram_free_gb": round((tot-used)/1024, 1), "util_pct": util})
+            if (tot - used) / tot > 0.6 and util < 25:
+                free_idx.append(i)
+        r["gpus"] = gpus
+        r["free_now"] = bool(free_idx)
+        r["note"] = ("%d/%d GPU(s) idle" % (len(free_idx), len(gpus)) if free_idx
+                     else "all %d GPU(s) busy" % len(gpus)) if gpus else "no GPUs reported"
+        return r
+    # cpu box
+    rc, out, err = run(SSH + [alias, "uptime; nproc 2>/dev/null"], timeout=20)
+    if rc != 0:
+        r["note"] = "unreachable (" + (err or "ssh failed")[:60] + ")"
+        return r
+    r["reachable"] = True
+    r["free_now"] = True   # no scheduler, no GPU contention to judge
+    r["note"] = out.splitlines()[0].strip()[:80] if out else "reachable"
+    return r
+
+
 def main():
     as_json = "--json" in sys.argv
-    with cf.ThreadPoolExecutor(max_workers=3) as ex:
-        futs = {ex.submit(f): n for n, f in
-                (("hurricane", probe_hurricane), ("ncshare", probe_ncshare), ("hazel", probe_hazel))}
+    custom = load_custom_sites()
+    builtin = (("hurricane", probe_hurricane), ("ncshare", probe_ncshare), ("hazel", probe_hazel))
+    with cf.ThreadPoolExecutor(max_workers=3 + len(custom)) as ex:
+        futs = {ex.submit(f): n for n, f in builtin}
+        for n, cfg in custom.items():
+            futs[ex.submit(probe_custom, n, cfg)] = n
         res = {}
         for fut in cf.as_completed(futs):
             res[futs[fut]] = fut.result()
-    order = ["hurricane", "ncshare", "hazel"]
+    order = ["hurricane", "ncshare", "hazel"] + sorted(custom)
     snap = {k: res[k] for k in order}
     if as_json:
         print(json.dumps(snap))

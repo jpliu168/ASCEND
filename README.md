@@ -59,6 +59,7 @@ To install exactly one arrangement without the menu:
 ./install.sh hazel        # NCSU Hazel only
 ./install.sh ncshare      # NCShare only
 ./install.sh hurricane    # MEAS single-GPU box only
+./install.sh add          # link YOUR OWN HPC or workstation (any campus)
 ./install.sh router       # just the ascend-all front door
 ./install.sh all          # the interactive menu (default)
 ```
@@ -98,9 +99,32 @@ Because the agent lives on the laptop, keep the laptop awake and connected while
 
 ---
 
+## Bring your own site
+
+The three arrangements above are presets for NC State resources — but ASCEND is not limited to them. `./install.sh add` (or option 4 in the interactive menu) links **any** Slurm HPC or workstation you have an account on: UNC Longleaf, Duke DCC, another campus's cluster, a lab GPU server, or a cloud VM.
+
+The wizard:
+
+1. sets up (or reuses) a multiplexed SSH alias to the site, so one interactive login buys hours of passwordless reuse;
+2. probes the site to detect what it is — Slurm cluster (`sinfo` present), GPU workstation (`nvidia-smi`, no scheduler), or plain CPU box — and confirms with you;
+3. **asks for the site's user guide or policy docs** (URLs or local files, optional but recommended). These land in the deployed skill's `references/` folder. On the agent's first session at the site it reads them together with a live probe (`sinfo`, `sacctmgr`, module system, storage quotas) and writes `references/site-profile.md` — the site-specific knowledge (partitions, QOS wall-time limits, purge rules, login-node etiquette) is *generated from the site's own documentation plus live probing*, the same way the Hazel profile works, rather than hand-written per site;
+4. deploys the shared harness (`hpcrun`, `hpcrepro`, `fetch-paper`) plus the matching generic skill (`hpc-slurm` for Slurm sites, `gpu-local` for workstations) to the remote;
+5. generates an `ascend-<site>` launcher on your laptop and registers the site in `~/.ascend/sites.json`, which makes `ascend-probe` include it in the live snapshot and `ascend-all` route jobs to it alongside the built-ins.
+
+```bash
+./install.sh add          # answer the prompts (name, ssh, docs)
+ascend-longleaf --check   # verify: link, claude, scheduler/GPU
+ascend-longleaf           # launch Claude Code on the site
+ascend-all "fine-tune a 7B model overnight on one GPU"   # or let the router pick
+```
+
+For a Slurm site the agent runs on the login node (scheduling and environment builds only; all compute goes through Slurm via `hpcrun`). For a workstation it runs on the box and work runs in place. Re-run `./install.sh add` with the same name to update a site, or with a new name to add another. Custom launchers and per-site files live under `~/.ascend/sites/<name>/`, so a `git pull` of this clone updates the shared harness without touching your site registrations.
+
+---
+
 ## The front door
 
-`ascend-all` is one command for all three resources. It probes what is actually free right now, asks the model which resource fits the job you described, explains the reasoning, and dispatches only after you confirm. Answering `0` discards the recommendation and lets you describe a different job against the same snapshot.
+`ascend-all` is one command for every resource — the three presets and any custom sites you have linked. It probes what is actually free right now, asks the model which resource fits the job you described, explains the reasoning, and dispatches only after you confirm. Answering `0` discards the recommendation and lets you describe a different job against the same snapshot.
 
 ![An ascend-all routing session](docs/images/ascend-all-session.png)
 
@@ -208,6 +232,7 @@ common/mac/bin/            laptop-side paper retrieval helpers
 hazel/                     Hazel setup, deploy, launcher, and the hpc-slurm skill
 ncshare/                   NCShare setup, deploy, launcher, and skills
 hurricane/                 hurricane setup, deploy, launcher, and the gpu-local skill
+custom/                    bring-your-own-site wizard, deploy, launcher template, generic skills
 docs/                      standalone install guides and figures
 tools/                     scripts that build the distributable zips
 ```

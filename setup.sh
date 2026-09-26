@@ -49,14 +49,16 @@ while :; do
   echo "  1) Hazel (NCSU HPC, via the login node -- needs a Hazel account)"
   echo "  2) NCShare (needs an NCShare account)"
   echo "  3) hurricane (NC State MEAS single-GPU box -- needs an account on it)"
-  echo "  4) done"
-  c="$(ask 'Choice [1-4]' 4)"
+  echo "  4) YOUR OWN site -- link any other HPC or workstation (UNC, Duke, a lab box, ...)"
+  echo "  5) done"
+  c="$(ask 'Choice [1-5]' 5)"
   case "$c" in
     1) bash "$HERE/hazel/setup-hazel.sh" && DONE="$DONE hazel" ;;
     2) bash "$HERE/ncshare/setup.sh"     && DONE="$DONE ncshare" ;;
     3) bash "$HERE/hurricane/setup-hurricane.sh" && DONE="$DONE hurricane" ;;
-    4|'') break ;;
-    *) echo "  1, 2, 3 or 4." ;;
+    4) bash "$HERE/custom/setup-custom.sh" && DONE="$DONE custom-site" ;;
+    5|'') break ;;
+    *) echo "  1, 2, 3, 4 or 5." ;;
   esac
 done
 

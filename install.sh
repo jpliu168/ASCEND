@@ -9,6 +9,8 @@
 #   ./install.sh hazel                     # NCSU Hazel only
 #   ./install.sh ncshare                   # NCShare only
 #   ./install.sh hurricane                 # MEAS single-GPU box only
+#   ./install.sh add                       # link YOUR OWN HPC or workstation
+#                                          #   (any campus: UNC, Duke, ... or a lab box)
 #   ./install.sh router                    # just the ascend-all front door
 #
 # Everything installs into ~/.local/bin (symlinks) and ~/.claude (skills and
@@ -43,10 +45,11 @@ case "$TARGET" in
   hazel)      bash "$HERE/hazel/setup-hazel.sh";          install_router ;;
   ncshare)    bash "$HERE/ncshare/setup.sh";              install_router ;;
   hurricane)  bash "$HERE/hurricane/setup-hurricane.sh";  install_router ;;
+  add|custom) bash "$HERE/custom/setup-custom.sh";        install_router ;;
   router)     install_router ;;
   -h|--help|help)
-    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  *) die "unknown target '$TARGET' (expected: all, hazel, ncshare, hurricane, router)" ;;
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) die "unknown target '$TARGET' (expected: all, hazel, ncshare, hurricane, add, router)" ;;
 esac
 
 case ":$PATH:" in

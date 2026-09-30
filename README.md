@@ -1,6 +1,8 @@
 # ASCEND
 
-**Autonomous Scientific Computing Engine for Novel Discovery**
+**Autonomous Scientific Computing Engine and Novel Discovery**
+
+📄 **Paper:** [ASCEND: Personal AI Agents for Autonomous Scientific Computing Across HPC Clusters and GPU Workstations](https://arxiv.org/abs/2609.32868) (arXiv:2609.32868)
 
 Personal AI agents for autonomous scientific computing across HPC clusters and GPU workstations.
 
@@ -295,9 +297,21 @@ Site documentation: [NCShare user guide](https://userguide.ncshare.org/guides/) 
 
 ## Citing this work
 
-If ASCEND supports work you publish, please cite the accompanying paper (in preparation) and this repository:
+If ASCEND supports work you publish, please cite the accompanying paper and this repository:
 
-> Liu, J. P., Petersen, A., and Herath, U. *ASCEND: Personal AI Agents for Autonomous Scientific Computing Across HPC Clusters and GPU Workstations.* https://github.com/jpliu168/ASCEND
+> Liu, J. P., Herath, U., and Petersen, A. (2026). *ASCEND: Personal AI Agents for Autonomous Scientific Computing Across HPC Clusters and GPU Workstations.* arXiv:2609.32868. https://arxiv.org/abs/2609.32868
+
+```bibtex
+@misc{liu2026ascend,
+  title         = {ASCEND: Personal AI Agents for Autonomous Scientific Computing Across HPC Clusters and GPU Workstations},
+  author        = {Liu, J. Paul and Herath, Uthpala and Petersen, Andrew},
+  year          = {2026},
+  eprint        = {2609.32868},
+  archivePrefix = {arXiv},
+  url           = {https://arxiv.org/abs/2609.32868},
+  note          = {Code: https://github.com/jpliu168/ASCEND}
+}
+```
 
 ---
 

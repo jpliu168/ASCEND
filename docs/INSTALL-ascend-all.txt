@@ -9,7 +9,7 @@
 
 WHAT THIS IS
 
-ASCEND (Autonomous Scientific Computing Engine for Novel Discovery) automates
+ASCEND (Autonomous Scientific Computing Engine and Novel Discovery) automates
 scientific computing with an AI agent (Claude Code) plus a controlled command
 layer. In this bundle the agent runs on YOUR laptop for all three resources —
 nothing to install or log in on a cluster node — and reaches each resource

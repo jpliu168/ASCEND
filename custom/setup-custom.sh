@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # ASCEND CUSTOM-SITE setup -- link YOUR OWN HPC or workstation to ASCEND:
 # a Slurm cluster at any campus (UNC, Duke, anywhere) or another GPU/CPU box.
-# The agent runs on the remote (login node or box) over a multiplexed ssh
-# alias; this wizard:
+# The agent runs either ON THIS COMPUTER (laptop-driven, per-command ssh --
+# recommended for HPC clusters) or ON THE REMOTE (recommended for
+# workstations you own), always over a multiplexed ssh alias; this wizard:
 #   1. sets up (or reuses) the ssh alias with connection multiplexing
 #   2. detects what the site is (Slurm cluster / GPU workstation / CPU box)
 #   3. optionally takes the site's user guide or policy docs -- the agent reads
 #      them plus a live probe on its first session and writes the site profile
-#   4. deploys the ASCEND harness + the matching generic skill to the remote
-#   5. generates an `ascend-<site>` launcher and registers the site so the
+#   4. asks where the agent runs (this computer / the remote)
+#   5. deploys the ASCEND harness + the matching generic skill to the remote
+#   6. generates an `ascend-<site>` launcher and registers the site so the
 #      `ascend-all` router can route jobs to it
 # Runs on macOS, Linux, and Windows via WSL. Requires: bash, ssh, rsync.
 # Re-run any time to add more sites or update one (same name = update).
@@ -103,10 +105,31 @@ esac
 K="$(ask 'Site kind [slurm/gpu/cpu]' "$DETECT")"
 case "$K" in slurm|gpu|cpu) KIND="$K" ;; *) KIND="$DETECT" ;; esac
 case "$KIND" in
-  slurm) KINDDESC="Slurm cluster, agent on the login node" ;;
+  slurm) KINDDESC="Slurm cluster" ;;
   gpu)   KINDDESC="GPU workstation, no scheduler" ;;
   cpu)   KINDDESC="CPU box, no scheduler" ;;
 esac
+
+# ---- 4b. where does the agent run? --------------------------------------------
+echo
+echo "Where should the AI agent (Claude Code / Codex) run for this site?"
+echo "  1) On THIS computer (laptop-driven) -- RECOMMENDED for HPC clusters:"
+echo "     nothing to install or log in on the shared login node; every site"
+echo "     command goes over the multiplexed ssh alias. Your computer must stay"
+echo "     on while the agent works (submitted Slurm jobs keep running)."
+echo "  2) On the REMOTE machine -- recommended for workstations/servers you"
+echo "     own: the agent CLI is installed and logged in there; with --tmux the"
+echo "     session survives closing your laptop."
+case "$KIND" in slurm) DEFMODE=1 ;; *) DEFMODE=2 ;; esac
+M="$(ask 'Choose [1/2]' "$DEFMODE")"
+case "$M" in 2|remote|r) MODE="remote" ;; *) MODE="local" ;; esac
+if [ "$MODE" = "local" ]; then
+  say "agent will run on this computer, driving '$ALIAS' per command"
+  KINDDESC="$KINDDESC, laptop-driven"
+else
+  say "agent will run on '$ALIAS'"
+  case "$KIND" in slurm) KINDDESC="$KINDDESC, agent on the login node" ;; esac
+fi
 
 # ---- 5. site docs (optional but recommended) ----------------------------------
 SITED="$HOME/.ascend/sites/$SITE"
@@ -141,20 +164,57 @@ say "deploying the ASCEND harness to '$ALIAS'..."
 bash "$HERE/deploy-custom.sh" "$SITE" "$ALIAS" "$KIND" "$REFS"
 
 # ---- 7. generate the launcher --------------------------------------------------
+# The launcher lets the user pick Claude Code or Codex per site; it sources
+# the shared chooser from ~/.ascend/lib, so keep that copy current.
+mkdir -p "$HOME/.ascend/lib"
+cp "$ROOT/common/ascend/lib/agent-select.sh" "$HOME/.ascend/lib/agent-select.sh"
 mkdir -p "$SITED/bin"
+TPL="ascend-site.tpl"
+[ "$MODE" = "local" ] && TPL="ascend-site-local.tpl"
 sed -e "s|@@SITE@@|$SITE|g" \
     -e "s|@@SITELABEL@@|$SITELABEL|g" \
     -e "s|@@SITEVAR@@|$SITEVAR|g" \
     -e "s|@@REMOTE@@|$ALIAS|g" \
     -e "s|@@KIND@@|$KIND|g" \
     -e "s|@@KINDDESC@@|$KINDDESC|g" \
-    "$HERE/templates/ascend-site.tpl" > "$SITED/bin/ascend-$SITE"
+    "$HERE/templates/$TPL" > "$SITED/bin/ascend-$SITE"
 chmod +x "$SITED/bin/ascend-$SITE"
-if [ ! -f "$SITED/AGENTS.md" ]; then
+# (Re)write the seed AGENTS.md -- it depends on the arrangement, and re-running
+# the wizard is the documented way to update a site. Projects keep their copies.
+SKILLNAME="$([ "$KIND" = slurm ] && echo hpc-slurm || echo gpu-local)"
+if [ "$MODE" = "local" ]; then
   cat > "$SITED/AGENTS.md" <<EOF
 # ASCEND project on $SITE ($KINDDESC)
 
-- This is a custom ASCEND site. Site facts live in the '$([ "$KIND" = slurm ] && echo hpc-slurm || echo gpu-local)'
+- You are running on the user's own computer. ALL site work goes through the
+  multiplexed ssh alias:  ssh $ALIAS '<command>'  -- batch related commands
+  into one ssh call where reasonable (each call pays login-shell startup).
+$([ "$KIND" = slurm ] && cat <<'SLURM'
+- The remote LOGIN NODE is for job scheduling and environment builds ONLY
+  (sbatch/squeue/hpcrun, conda/pip/module/git/staging). Everything that
+  computes goes into a Slurm job -- never run heavy work on the login node.
+SLURM
+)
+$([ "$KIND" != slurm ] && cat <<'BOX'
+- The remote box has no scheduler: run work in place over ssh, one heavy job
+  at a time; check load/GPU first (uptime / nvidia-smi) -- it may be shared.
+BOX
+)
+- NEVER answer password/Duo prompts yourself. If an ssh command stalls or asks
+  for authentication, STOP and ask the user to warm the link in another
+  terminal with:  ssh $ALIAS   (multiplexing then keeps it warm for hours).
+- Site facts live in the '$SKILLNAME' skill ON THE REMOTE: read its
+  references/ (site docs + site-profile.md) before assuming partitions,
+  limits, GPUs, or storage rules.
+- Use ~/bin/hpcrun on the remote for scheduled/heavy work; keep provenance;
+  one heavy job at a time until the site's behavior is understood.
+- Respect the site's own acceptable-use policy.
+EOF
+else
+  cat > "$SITED/AGENTS.md" <<EOF
+# ASCEND project on $SITE ($KINDDESC)
+
+- This is a custom ASCEND site. Site facts live in the '$SKILLNAME'
   skill: read its references/ (site docs + site-profile.md) before assuming
   partitions, limits, GPUs, or storage rules.
 - Use ~/bin/hpcrun for scheduled/heavy work; keep provenance; one heavy job at
@@ -166,16 +226,16 @@ ln -sf "$SITED/bin/ascend-$SITE" "$HOME/.local/bin/ascend-$SITE"
 say "launcher installed:  ascend-$SITE"
 
 # ---- 8. register with the router ----------------------------------------------
-python3 - "$SITE" "$ALIAS" "$KIND" "$KINDDESC" <<'PY'
+python3 - "$SITE" "$ALIAS" "$KIND" "$KINDDESC" "$MODE" <<'PY'
 import json, os, sys, datetime
-site, alias, kind, desc = sys.argv[1:5]
+site, alias, kind, desc, mode = sys.argv[1:6]
 p = os.path.expanduser("~/.ascend/sites.json")
 try:
     reg = json.load(open(p))
     assert isinstance(reg, dict)
 except Exception:
     reg = {}
-reg[site] = {"remote": alias, "kind": kind, "desc": desc,
+reg[site] = {"remote": alias, "kind": kind, "desc": desc, "mode": mode,
              "added": datetime.date.today().isoformat()}
 os.makedirs(os.path.dirname(p), exist_ok=True)
 json.dump(reg, open(p, "w"), indent=1)
@@ -184,6 +244,10 @@ PY
 
 echo
 say "done. Verify from a NEW terminal:   ascend-$SITE --check"
+if [ "$MODE" = "local" ]; then
+  echo "   Agent runs on THIS computer; if the site prompts for password/Duo,"
+  echo "   warm the link once per session first:  ssh $ALIAS"
+fi
 echo "   Launch on it directly:            ascend-$SITE"
 echo "   Or let the router pick:           ascend-all \"describe your job\""
 case "$KIND" in slurm)

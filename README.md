@@ -107,18 +107,19 @@ The wizard:
 
 1. sets up (or reuses) a multiplexed SSH alias to the site, so one interactive login buys hours of passwordless reuse;
 2. probes the site to detect what it is — Slurm cluster (`sinfo` present), GPU workstation (`nvidia-smi`, no scheduler), or plain CPU box — and confirms with you;
-3. **asks for the site's user guide or policy docs** (URLs or local files, optional but recommended). These land in the deployed skill's `references/` folder. On the agent's first session at the site it reads them together with a live probe (`sinfo`, `sacctmgr`, module system, storage quotas) and writes `references/site-profile.md` — the site-specific knowledge (partitions, QOS wall-time limits, purge rules, login-node etiquette) is *generated from the site's own documentation plus live probing*, the same way the Hazel profile works, rather than hand-written per site;
-4. deploys the shared harness (`hpcrun`, `hpcrepro`, `fetch-paper`) plus the matching generic skill (`hpc-slurm` for Slurm sites, `gpu-local` for workstations) to the remote;
-5. generates an `ascend-<site>` launcher on your laptop and registers the site in `~/.ascend/sites.json`, which makes `ascend-probe` include it in the live snapshot and `ascend-all` route jobs to it alongside the built-ins.
+3. **asks where the agent runs** — on your own computer (laptop-driven, the recommended arrangement for HPC clusters: nothing to install or log in on a shared login node, every site command goes over the multiplexed alias, but your computer stays on while it works) or on the remote machine itself (recommended for workstations and servers you own: the agent CLI is installed and logged in there, and `--tmux` survives your laptop closing);
+4. **asks for the site's user guide or policy docs** (URLs or local files, optional but recommended). These land in the deployed skill's `references/` folder. On the agent's first session at the site it reads them together with a live probe (`sinfo`, `sacctmgr`, module system, storage quotas) and writes `references/site-profile.md` — the site-specific knowledge (partitions, QOS wall-time limits, purge rules, login-node etiquette) is *generated from the site's own documentation plus live probing*, the same way the Hazel profile works, rather than hand-written per site;
+5. deploys the shared harness (`hpcrun`, `hpcrepro`, `fetch-paper`) plus the matching generic skill (`hpc-slurm` for Slurm sites, `gpu-local` for workstations) to the remote;
+6. generates an `ascend-<site>` launcher on your laptop and registers the site in `~/.ascend/sites.json`, which makes `ascend-probe` include it in the live snapshot and `ascend-all` route jobs to it alongside the built-ins.
 
 ```bash
 ./install.sh add          # answer the prompts (name, ssh, docs)
 ascend-longleaf --check   # verify: link, claude, scheduler/GPU
-ascend-longleaf           # launch Claude Code on the site
+ascend-longleaf           # launch the agent (Claude Code or Codex — asked on first run)
 ascend-all "fine-tune a 7B model overnight on one GPU"   # or let the router pick
 ```
 
-For a Slurm site the agent runs on the login node (scheduling and environment builds only; all compute goes through Slurm via `hpcrun`). For a workstation it runs on the box and work runs in place. Re-run `./install.sh add` with the same name to update a site, or with a new name to add another. Custom launchers and per-site files live under `~/.ascend/sites/<name>/`, so a `git pull` of this clone updates the shared harness without touching your site registrations.
+In the laptop-driven arrangement the agent runs on your computer and drives the site per command over ssh (on a Slurm site the login node is used for scheduling and environment builds only; all compute goes through Slurm via `hpcrun`). In the remote arrangement it runs on the site itself — on a Slurm login node or directly on the workstation, where work runs in place. Re-run `./install.sh add` with the same name to update a site, or with a new name to add another. Custom launchers and per-site files live under `~/.ascend/sites/<name>/`, so a `git pull` of this clone updates the shared harness without touching your site registrations.
 
 ---
 
@@ -127,6 +128,22 @@ For a Slurm site the agent runs on the login node (scheduling and environment bu
 `ascend-all` is one command for every resource — the three presets and any custom sites you have linked. It probes what is actually free right now, asks the model which resource fits the job you described, explains the reasoning, and dispatches only after you confirm. Answering `0` discards the recommendation and lets you describe a different job against the same snapshot.
 
 ![An ascend-all routing session](docs/images/ascend-all-session.png)
+
+---
+
+## Choose your agent: Claude Code or Codex
+
+ASCEND drives either **Claude Code** (Anthropic) or **Codex** (OpenAI). Every launch of `ascend-ncshare`, `ascend-hazel`, or a custom `ascend-<site>` shows the ASCEND banner and then asks:
+
+```
+Which AI agent for this session?
+  1) Claude Code  (Anthropic)
+  2) Codex        (OpenAI)
+```
+
+Nothing is remembered — you choose each time. Skip the question with `--claude` or `--codex` (useful in scripts; non-interactive runs default to Claude Code). Both agents read the same `AGENTS.md` project instructions and route work over the same multiplexed `~/.ssh/config` aliases; only the CLI doing the reasoning changes.
+
+If the chosen CLI is missing, the launcher offers to install it — Claude Code with `curl -fsSL https://claude.ai/install.sh | bash`, Codex with `curl -fsSL https://chatgpt.com/codex/install.sh | sh` — on the laptop for the laptop-driven arrangements, or over ssh on the remote for custom sites (where the agent runs on the site itself). Run the CLI once afterwards to log in (Claude subscription / ChatGPT account). The `ascend-all` router hands off to the site's launcher, which asks the same question.
 
 ---
 
@@ -150,7 +167,7 @@ If you're setting up Hazel, read NC State's own docs first: the [Hazel Slurm Qui
 
 You also need macOS, Linux, or Windows with WSL (Ubuntu), plus `bash`, `ssh`, `rsync`, and `git`. On Windows, do everything inside the Ubuntu shell and keep the clone in the Linux home directory, not under `/mnt/c`.
 
-Claude Code with a Claude subscription must be installed on the laptop. The installer offers to fetch it (`curl -fsSL https://claude.ai/install.sh | bash`); run `claude` once afterwards to log in.
+Claude Code with a Claude subscription must be installed on the laptop (the installer offers to fetch it; run `claude` once afterwards to log in). Codex is optional — install it only if you plan to pick it as the agent (see "Choose your agent: Claude Code or Codex" above).
 
 If `~/.local/bin` is not already on your `PATH`, add it:
 

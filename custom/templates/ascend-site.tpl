@@ -6,8 +6,13 @@
 #   ascend-@@SITE@@                    # start in the site's projects dir
 #   ascend-@@SITE@@ -d <remote-path>   # start in a specific project (remote path)
 #   ascend-@@SITE@@ --tmux             # run inside tmux on the remote (survives disconnects)
-#   ascend-@@SITE@@ --check            # test link + claude (+ scheduler/GPU) and exit
+#   ascend-@@SITE@@ --check            # test link + agent CLIs (+ scheduler/GPU) and exit
+#   ascend-@@SITE@@ --codex            # skip the question: use Codex (OpenAI)
+#   ascend-@@SITE@@ --claude           # skip the question: use Claude Code
 #
+# Every launch shows the ASCEND banner, then asks which agent to use
+# (1: Claude Code, 2: Codex). The agent runs ON the remote, so the chosen
+# CLI must be installed there (the launcher offers to install it).
 # Needs the "@@REMOTE@@" ssh alias (ControlMaster + key auth = passwordless).
 # Written for macOS bash 3.2.
 set -Eeuo pipefail
@@ -24,6 +29,7 @@ KIND="@@KIND@@"   # slurm | gpu | cpu
 WORKDIR="${ASCEND_@@SITEVAR@@_PROJECT_DIR:-}"
 CHECK=0
 TMUX=0
+AGENT_CHOICE=""
 ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -31,7 +37,9 @@ while [ $# -gt 0 ]; do
     -d) WORKDIR="$2"; shift 2 ;;
     --check) CHECK=1; shift ;;
     --tmux) TMUX=1; shift ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --claude) AGENT_CHOICE="claude"; shift ;;
+    --codex) AGENT_CHOICE="codex"; shift ;;
+    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do ARGS[${#ARGS[@]}]="$1"; shift; done ;;
     *) ARGS[${#ARGS[@]}]="$1"; shift ;;
   esac
@@ -61,7 +69,7 @@ if [ "$CHECK" = "1" ]; then
     gpu)   EXTRA='nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv,noheader 2>/dev/null || echo "nvidia-smi: none"' ;;
     *)     EXTRA='uptime' ;;
   esac
-  RC="hostname; grep -h PRETTY /etc/os-release 2>/dev/null; command -v claude >/dev/null && claude --version || echo 'claude: NOT on PATH'; $EXTRA; curl -sI --max-time 5 https://api.anthropic.com >/dev/null && echo 'anthropic api: reachable' || echo 'anthropic api: UNREACHABLE'; command -v tmux >/dev/null && echo 'tmux: present' || echo 'tmux: absent'; echo OK"
+  RC="hostname; grep -h PRETTY /etc/os-release 2>/dev/null; command -v claude >/dev/null && claude --version || echo 'claude: NOT on PATH'; command -v codex >/dev/null && codex --version 2>/dev/null | head -1 || echo 'codex: NOT on PATH'; $EXTRA; curl -sI --max-time 5 https://api.anthropic.com >/dev/null && echo 'anthropic api: reachable' || echo 'anthropic api: UNREACHABLE'; command -v tmux >/dev/null && echo 'tmux: present' || echo 'tmux: absent'; echo OK"
   ssh "$REMOTE" "bash -lc $(printf '%q' "$RC")"
   exit 0
 fi
@@ -78,19 +86,33 @@ dim "    site     @@SITE@@ (@@KINDDESC@@) via ssh alias '@@REMOTE@@'"
 dim "    workdir  $WORKDIR  (on the remote)"
 case "$KIND" in
   slurm)
-    dim "    agent    Claude Code runs on the LOGIN NODE — scheduling + env builds only"
+    dim "    agent    runs on the LOGIN NODE — scheduling + env builds only"
     dim "    compute  everything heavy goes through Slurm (hpcrun / sbatch), never the login node"
     ;;
   gpu)
-    dim "    agent    Claude Code runs ON the box — GPU is local, NO scheduler"
+    dim "    agent    runs ON the box — GPU is local, NO scheduler"
     dim "    share    check 'nvidia-smi' before heavy runs; the GPU may be shared"
     ;;
   *)
-    dim "    agent    Claude Code runs ON the box — no scheduler; run in place"
+    dim "    agent    runs ON the box — no scheduler; run in place"
     ;;
 esac
 dim "    tools    ~/bin: hpcrun · hpcrepro · fetch-paper"
 echo
+
+# Pick the agent CLI (Claude Code default / Codex), remembered per site.
+AGENTLIB="$HOME/.ascend/lib/agent-select.sh"
+if [ -f "$AGENTLIB" ]; then
+  . "$AGENTLIB"
+else
+  ASCEND_AGENT="${AGENT_CHOICE:-claude}"; case "$ASCEND_AGENT" in ask) ASCEND_AGENT=claude ;; esac
+  ASCEND_AGENT_LABEL="Claude Code"; [ "$ASCEND_AGENT" = codex ] && ASCEND_AGENT_LABEL="Codex"
+  agent_select() { :; }
+fi
+agent_select @@SITE@@ "$AGENT_CHOICE" "remote:$REMOTE"
+dim "    agent    $ASCEND_AGENT_LABEL (runs on the remote)"
+echo
+
 
 # Seed AGENTS.md on the remote if this project doesn't have one.
 if ! ssh "$REMOTE" "test -f '$WORKDIR/AGENTS.md' || test -f '$WORKDIR/CLAUDE.md'"; then
@@ -101,11 +123,34 @@ if ! ssh "$REMOTE" "test -f '$WORKDIR/AGENTS.md' || test -f '$WORKDIR/CLAUDE.md'
   fi
 fi
 
+# The agent runs on the remote: make sure the chosen CLI is installed there.
+if ! ssh "$REMOTE" "bash -lc 'command -v $ASCEND_AGENT'" >/dev/null 2>&1; then
+  if [ "$ASCEND_AGENT" = "codex" ]; then
+    INST='curl -fsSL https://chatgpt.com/codex/install.sh | sh'
+  else
+    INST='curl -fsSL https://claude.ai/install.sh | bash'
+  fi
+  echo "$ASCEND_AGENT_LABEL is not installed on '$REMOTE'."
+  if [ -t 0 ]; then
+    printf 'Install it there now?  (ssh %s "%s")  [Y/n]: ' "$REMOTE" "$INST"
+    read -r a || a=""
+    case "$a" in
+      n|N|no|NO|No) echo "Install it yourself, then re-run:  ssh $REMOTE 'bash -lc \"$INST\"'" ; exit 1 ;;
+      *) ssh -t "$REMOTE" "bash -lc $(printf '%q' "$INST")" || { echo "install failed on $REMOTE" >&2; exit 1; } ;;
+    esac
+    ssh "$REMOTE" "bash -lc 'command -v $ASCEND_AGENT'" >/dev/null 2>&1 \
+      || { echo "$ASCEND_AGENT still not on the remote PATH -- open a fresh ssh session and check." >&2; exit 1; }
+    echo "$ASCEND_AGENT_LABEL installed on $REMOTE. Its first run will walk you through login."
+  else
+    echo "Install it first:  ssh $REMOTE 'bash -lc \"$INST\"'" >&2; exit 1
+  fi
+fi
+
 # Ship the remote command base64-encoded so no quoting layer mangles it; run
 # via a LOGIN shell so ~/.local/bin (claude) and any token in ~/.bashrc load.
-CLAUDE_ARGS=""
-[ ${#ARGS[@]} -gt 0 ] && CLAUDE_ARGS=" ${ARGS[*]}"
-INNER="cd '$WORKDIR' && exec claude$CLAUDE_ARGS"
+AGENT_ARGS=""
+[ ${#ARGS[@]} -gt 0 ] && AGENT_ARGS=" ${ARGS[*]}"
+INNER="cd '$WORKDIR' && exec $ASCEND_AGENT$AGENT_ARGS"
 if [ "$TMUX" = "1" ]; then
   PAYLOAD="if command -v tmux >/dev/null 2>&1; then exec tmux new -A -s ascend-@@SITE@@ -c '$WORKDIR' \"bash -lc \\\"$INNER\\\"\"; else $INNER; fi"
 else

@@ -110,6 +110,14 @@ STEP 4 — DAILY USE
     cd <your project>
     ascend-hazel                  # starts the agent in this project
 
+Every launch shows the ASCEND banner and then asks which AI agent to use —
+1) Claude Code (Anthropic) or 2) Codex (OpenAI). Nothing is remembered:
+you choose each time (skip the question with --claude / --codex). If Codex
+is chosen and not installed, the launcher offers:
+  curl -fsSL https://chatgpt.com/codex/install.sh | sh
+(run `codex` once afterwards to log in). Both agents follow the same
+AGENTS.md instructions over the same multiplexed hazel alias.
+
 The first start seeds the project with AGENTS.md — the agent's standing
 instructions (login-node policy, Slurm/typed-GPU rules, storage rules) — and
 a status line showing whether the hazel link is warm.

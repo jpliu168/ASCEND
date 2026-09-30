@@ -124,6 +124,13 @@ STEP 3 — DAILY USE
     ascend-all                   # or go straight to a specific launcher
     cd <project> && ascend-hazel / ascend-ncshare / ascend-hurricane
 
+Every launch shows the ASCEND banner, then asks which AI agent drives it —
+1) Claude Code or 2) Codex (OpenAI). Nothing is remembered: you choose each
+time (--claude / --codex skip the question). A missing CLI is offered for
+install:
+  Claude Code:  curl -fsSL https://claude.ai/install.sh | bash
+  Codex:        curl -fsSL https://chatgpt.com/codex/install.sh | sh
+
 First start in a project seeds AGENTS.md — the agent's standing instructions
 for that resource (execution policy, storage and conda rules, when to suggest
 a different resource) — personalized with your username.

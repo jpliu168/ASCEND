@@ -9,7 +9,12 @@
 #   ascend-ncshare                  # start in the current directory
 #   ascend-ncshare -d ~/regional_gs # start in a specific project
 #   ascend-ncshare --check          # test both cluster aliases and exit
+#   ascend-ncshare --codex          # skip the question: use Codex (OpenAI)
+#   ascend-ncshare --claude         # skip the question: use Claude Code
 #
+# Every launch shows the ASCEND banner, then asks which agent to use
+# (1: Claude Code, 2: Codex). Both agents read the same AGENTS.md and route
+# cluster work over the same multiplexed ssh aliases.
 # Written for macOS bash 3.2.
 set -Eeuo pipefail
 
@@ -27,13 +32,16 @@ BUNDLE="$(cd "$(dirname "$SRC")/.." && pwd)"
 WORKDIR="${ASCEND_NCSHARE_PROJECT_DIR:-$HOME/agents/ncshare/projects}"
 if [ -f "$PWD/AGENTS.md" ] || [ -f "$PWD/CLAUDE.md" ]; then WORKDIR="$PWD"; fi
 CHECK=0
+AGENT_CHOICE=""
 ARGS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -d) WORKDIR="$2"; shift 2 ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --claude) AGENT_CHOICE="claude"; shift ;;
+    --codex) AGENT_CHOICE="codex"; shift ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do ARGS[${#ARGS[@]}]="$1"; shift; done ;;
     *) ARGS[${#ARGS[@]}]="$1"; shift ;;
   esac
@@ -61,8 +69,6 @@ if [ "$CHECK" = "1" ]; then
   exit 0
 fi
 
-CCV="$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-[ -n "$CCV" ] && CCV="Claude Code v$CCV" || { echo "claude is not on PATH." >&2; exit 1; }
 if [ ! -d "$WORKDIR" ]; then
   echo "creating workdir: $WORKDIR"
   mkdir -p "$WORKDIR" || { echo "cannot create workdir: $WORKDIR" >&2; exit 1; }
@@ -75,7 +81,7 @@ b '    ▄▀█ █▀ █▀▀ █▀▀ █▄░█ █▀▄'
 b '    █▀█ ▄█ █▄▄ ██▄ █░▀█ █▄▀'
 echo
 printf '    \033[1mAI-powered Automation Scientific Computing and Discovery System\033[0m\n'
-dim "    Autonomous Scientific Computing Engine for Novel Discovery   ($CCV)"
+dim "    Autonomous Scientific Computing Engine for Novel Discovery"
 echo
 dim "    workdir  $WORKDIR"
 dim "    cluster  ssh ncshare-agent '<cmd>' (CPU) · ssh ncshare-agent-gpu '<cmd>' (GPU)"
@@ -101,6 +107,22 @@ else
 fi
 echo
 
+# Pick the agent CLI (Claude Code default / Codex), remembered per site.
+AGENTLIB="$BUNDLE/../../common/ascend/lib/agent-select.sh"
+if [ -f "$AGENTLIB" ]; then
+  . "$AGENTLIB"
+else
+  ASCEND_AGENT="${AGENT_CHOICE:-claude}"; case "$ASCEND_AGENT" in ask) ASCEND_AGENT=claude ;; esac
+  ASCEND_AGENT_LABEL="Claude Code"; [ "$ASCEND_AGENT" = codex ] && ASCEND_AGENT_LABEL="Codex"
+  agent_select() { :; }
+  agent_ensure_local() { command -v "$ASCEND_AGENT" >/dev/null 2>&1 || { echo "$ASCEND_AGENT is not on PATH." >&2; exit 1; }; }
+  agent_version_label() { printf '%s' "$ASCEND_AGENT_LABEL"; }
+fi
+agent_select ncshare "$AGENT_CHOICE"
+agent_ensure_local
+dim "    agent    $(agent_version_label)"
+echo
+
 # Ensure the project carries the ASCEND-NCSHARE instructions and statusline.
 if [ ! -f "$WORKDIR/AGENTS.md" ] && [ ! -f "$WORKDIR/CLAUDE.md" ]; then
   # Resolve the NCShare username (from the ncshare-agent alias, else $USER) and
@@ -117,4 +139,4 @@ if [ ! -f "$WORKDIR/.claude/settings.json" ]; then
 fi
 
 cd "$WORKDIR"
-exec claude ${ARGS[@]+"${ARGS[@]}"}
+exec "$ASCEND_AGENT" ${ARGS[@]+"${ARGS[@]}"}

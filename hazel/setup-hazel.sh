@@ -55,6 +55,28 @@ else
   echo "  NOTE: when setup finishes, run 'claude' once and log in (subscription login)."
 fi
 
+
+# 0b. Codex (OpenAI) -- optional alternative agent. Every ASCEND launcher asks
+#     at every launch which agent drives it (1: Claude Code, 2: Codex);
+#     installing Codex now just saves a step.
+if command -v codex >/dev/null 2>&1; then
+  say "Codex found too: $(codex --version 2>/dev/null | head -1 || echo version unknown) -- launchers will offer both agents."
+else
+  a="$(ask 'Optional: also install Codex (OpenAI) as an alternative agent (curl -fsSL https://chatgpt.com/codex/install.sh | sh)? [y/N]' N)"
+  case "$a" in
+    [Yy]*)
+      if curl -fsSL https://chatgpt.com/codex/install.sh | sh; then
+        export PATH="$HOME/.local/bin:$PATH"
+        command -v codex >/dev/null 2>&1 \
+          && say "Codex installed: run 'codex' once to log in (ChatGPT account)." \
+          || warn "Codex installer ran but 'codex' is not on PATH -- check its output."
+      else
+        warn "Codex install failed -- you can retry later; the launcher also offers it."
+      fi ;;
+    *) echo "  (skipped -- if you pick Codex at launch, the launcher offers to install it)" ;;
+  esac
+fi
+
 SSHCFG="$HOME/.ssh/config"
 
 # 1. the `hazel` multiplexed alias (ControlMaster to login.hpc.ncsu.edu).

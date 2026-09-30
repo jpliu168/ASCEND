@@ -145,6 +145,10 @@ Which AI agent for this session?
 
 Nothing is remembered — you choose each time. Skip the question with `--claude` or `--codex` (useful in scripts; non-interactive runs default to Claude Code). Both agents read the same `AGENTS.md` project instructions and route work over the same multiplexed `~/.ssh/config` aliases; only the CLI doing the reasoning changes.
 
+![Per-session agent choice: the launcher menu, and both runtimes converging on the same tools and SSH boundary](docs/images/agent-choice.png)
+
+*Left: a recorded `ascend-hazel` launch — banner, then the runtime menu with each CLI's installed version. Right: whichever runtime is chosen, the session uses the same AGENTS.md, the same typed tools, and the same multiplexed SSH link; the provider APIs stay outside the credential boundary.*
+
 If the chosen CLI is missing, the launcher offers to install it — Claude Code with `curl -fsSL https://claude.ai/install.sh | bash`, Codex with `curl -fsSL https://chatgpt.com/codex/install.sh | sh` — on the laptop for the laptop-driven arrangements, or over ssh on the remote for custom sites (where the agent runs on the site itself). Run the CLI once afterwards to log in (Claude subscription / ChatGPT account). The `ascend-all` router hands off to the site's launcher, which asks the same question.
 
 ---

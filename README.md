@@ -33,10 +33,13 @@ The agent reasons through a cloud language model that never has cluster access. 
 > ```bash
 > ssh <your-ncshare-username>@login.ncshare.org     # NCShare
 > ssh <your-unity-id>@login.hpc.ncsu.edu            # NCSU Hazel
+> ssh <YOUR_NETID>@dcc-login.oit.duke.edu           # Duke DCC
+> ssh <onyen>@longleaf.unc.edu                      # UNC Longleaf
+> ssh <user_name>@yourhpc.univ.edu                  # your own campus HPC
 > ssh <your-username>@<your-workstation>            # a GPU workstation such as hurricane
 > ```
 >
-> If none of those gets you a shell, stop here and request an account first. NCShare accounts come through [userguide.ncshare.org](https://userguide.ncshare.org/guides/); Hazel accounts require a Unity ID and membership in an HPC project, see [hpc.ncsu.edu](https://hpc.ncsu.edu/main.php); a workstation account comes from whoever administers that machine.
+> If none of those gets you a shell, stop here and request an account first. NCShare accounts come through [userguide.ncshare.org](https://userguide.ncshare.org/guides/); Hazel accounts require a Unity ID and membership in an HPC project, see [hpc.ncsu.edu](https://hpc.ncsu.edu/main.php); Duke DCC and UNC Longleaf accounts come from your own campus research-computing group; any other cluster or workstation account comes from whoever administers that machine.
 >
 > You will also need Claude Code with a Claude subscription on your laptop. The installer offers to fetch it if it is missing.
 
@@ -95,7 +98,12 @@ ascend-all                  # the router: probe and recommendation
 | `ascend-hazel` | NCSU Hazel HPC | your laptop | multiplexed SSH to `login.hpc.ncsu.edu`; login node used only for scheduling and environment builds, all compute inside Slurm with typed GPU requests such as `--gres=gpu:l40s:1` |
 | `ascend-ncshare` | NCShare (Duke/NC State) | your laptop | the `ncshare-agent` and `ncshare-agent-gpu` proxy aliases, which provision or reuse a Slurm job per command |
 | `ascend-hurricane` | MEAS single-GPU box (RTX PRO 6000 Blackwell, about 98 GB) | your laptop | direct SSH; no scheduler, so work runs in place, one heavy job at a time |
-| `ascend-all` | all of the above | your laptop | describes the job to the model, probes live capacity, recommends a resource, then launches that launcher |
+| `ascend-dcc`* | Duke DCC | your laptop or the DCC login node | `./install.sh add` with `dcc-login.oit.duke.edu`; multiplexed SSH, all compute inside Slurm |
+| `ascend-longleaf`* | UNC Longleaf | your laptop or the Longleaf login node | `./install.sh add` with `longleaf.unc.edu`; multiplexed SSH, all compute inside Slurm |
+| `ascend-<yourhpc>`* | your own HPC or workstation | your laptop or the machine itself (you choose during setup) | `./install.sh add` — the wizard creates the multiplexed alias, detects Slurm/GPU/CPU, and deploys the harness |
+| `ascend-all` | all of the above, including your linked sites | your laptop | describes the job to the model, probes live capacity, recommends a resource, then launches that launcher |
+
+\* Created by the bring-your-own-site wizard — the launcher is named after whatever short name you give the site.
 
 Because the agent lives on the laptop, keep the laptop awake and connected while the agent is actively working. Jobs already submitted to Slurm keep running with the lid closed; reopen, re-warm the link, and `claude --resume` to pick up where you left off.
 
@@ -168,6 +176,8 @@ You need an account on at least one resource before installing:
 * **Hazel** a Unity ID in an HPC project, such that `ssh <unityID>@login.hpc.ncsu.edu` works
 * **NCShare** an NCShare username with a `/work/<user>` directory
 * **hurricane** an account on the box (NC State MEAS)
+* **Your own HPC** an account on any Slurm cluster you can reach over SSH — e.g. Duke DCC (`ssh <YOUR_NETID>@dcc-login.oit.duke.edu`) or UNC Longleaf (`ssh <onyen>@longleaf.unc.edu`) — linked with `./install.sh add`
+* **Your own workstation** SSH access to any GPU or CPU box you use (`ssh <user_name>@yourbox.univ.edu`), also linked with `./install.sh add`
 
 If you're setting up Hazel, read NC State's own docs first: the [Hazel Slurm QuickStart guide](https://hpc.ncsu.edu/QuickStart/QuickStart-slurm.php) and Hazel's [Acceptable Use Policy](https://hpc.ncsu.edu/Accounts/GetAccess.php). This harness enforces the operational rules (login-node use, typed gres, storage locations) day to day but does not replace either document.
 
@@ -222,9 +232,14 @@ Warm a link by hand with `ssh hazel`, check one with `ascend-hazel --check`, and
 
 ```bash
 ssh hazel                    # warm the link once per session (Duo)
-ascend-all                   # or go straight to a specific launcher
-cd <project> && ascend-hazel
+ascend-all                   # the router — or go straight to a specific launcher:
+cd <project> && ascend-hazel     # NCSU Hazel
+ascend-ncshare                   # NCShare
+ascend-hurricane                 # the MEAS GPU box
+ascend-dcc / ascend-longleaf / ascend-<yourhpc>   # sites you linked with ./install.sh add
 ```
+
+Every launcher prints its banner and then asks which agent drives the session — 1) Claude Code or 2) Codex (skip the question with `--claude` / `--codex`).
 
 The first start in a project directory seeds an `AGENTS.md`: the agent's standing instructions for that resource, personalized with your username. It covers the execution policy, storage and Conda rules, and when the agent should suggest moving the work to a different resource.
 

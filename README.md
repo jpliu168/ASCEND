@@ -161,6 +161,21 @@ If the chosen CLI is missing, the launcher offers to install it — Claude Code 
 
 ---
 
+## Web interface: ascend-web
+
+A minimal browser chat for the same agent — useful when you'd rather talk to ASCEND in a web page than a terminal. It is a localhost-only Python server (standard library, nothing to install) that relays each message to Claude Code in headless streaming mode, running inside the ASCEND project directory for the resource you pick. Conversations continue across messages, and any file the agent creates in the project folder — an HTML report, a plot, a log — appears as a chip under the reply and renders inline in the page.
+
+```
+./install.sh web      # links ascend-web into ~/.local/bin
+ascend-web            # starts http://127.0.0.1:8765 and opens your browser
+```
+
+![ASCEND-Web: chat with the agent in the browser; result files render inline](docs/images/ascend-web.png)
+
+The resource dropdown is built from `web/config.json` — the shipped entries match the ASCEND defaults, and you edit the list to your own sites (a custom `ascend-<site>`, your campus cluster, a workstation). Before first use, seed each project directory once with the normal launcher (for example `ascend-ncshare -d ~/agents/ncshare/projects/web`, then exit) so the agent gets that site's rules. Headless mode cannot show permission prompts, so the server defaults to auto-approving the agent's commands — the same trust as an auto-approved CLI session; it binds only to 127.0.0.1 with a per-start access token, and `web/README.md` documents a tighter allowed-tools configuration. The web backend drives Claude Code only (the per-launch Codex choice does not apply here yet).
+
+---
+
 ## How failures are handled
 
 ![Execution and recovery flow](docs/images/recovery-flow.png)
@@ -271,6 +286,7 @@ hazel/                     Hazel setup, deploy, launcher, and the hpc-slurm skil
 ncshare/                   NCShare setup, deploy, launcher, and skills
 hurricane/                 hurricane setup, deploy, launcher, and the gpu-local skill
 custom/                    bring-your-own-site wizard, deploy, launcher template, generic skills
+web/                       ascend-web, the localhost browser chat UI
 docs/                      standalone install guides and figures
 tools/                     scripts that build the distributable zips
 ```

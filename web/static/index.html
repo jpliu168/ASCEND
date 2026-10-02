@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASCEND-Web</title>
+<style>
+  :root {
+    --bg: #11151c; --panel: #1a2029; --panel2: #202835;
+    --text: #e8edf4; --dim: #8b97a8; --line: #2c3645;
+    --red: #e24a3b; --orange: #f08c3a; --green: #4cc38a; --blue: #5aa9e6;
+    --user-bg: #27405c; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f5f7fa; --panel:#ffffff; --panel2:#eef2f7; --text:#1c2430;
+            --dim:#5d6b7d; --line:#d8dfe8; --user-bg:#dcebfa; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font: 15px/1.55 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+         display:flex; flex-direction:column; height:100vh; }
+  header { display:flex; align-items:center; gap:14px; padding:10px 18px;
+           background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .logo { font-weight:800; letter-spacing:.14em; font-size:17px;
+          background:linear-gradient(90deg, var(--red), var(--orange));
+          -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .logo small { -webkit-text-fill-color:var(--dim); color:var(--dim); font-weight:500; letter-spacing:.02em; }
+  .badges { display:flex; gap:7px; align-items:center; }
+  .badge { font-size:11px; font-weight:700; letter-spacing:.06em; padding:3px 10px;
+           border-radius:6px; color:#fff; white-space:nowrap; }
+  .badge.ncsu { background:#CC0000; }
+  .badge.duke { background:#012169; }
+  .credit { text-align:center; color:var(--dim); font-size:11.5px; margin-top:4px; }
+  .credit a { color: var(--blue); text-decoration:none; }
+  .credit a:hover { text-decoration:underline; }
+  select, button {
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:7px 12px; font-size:14px; cursor:pointer;
+  }
+  button:hover { border-color: var(--orange); }
+  button:disabled { opacity:.45; cursor:default; }
+  #stopBtn { border-color: var(--red); color: var(--red); display:none; }
+  .meta { color:var(--dim); font-size:12.5px; margin-left:auto; text-align:right; }
+  #note { color:var(--dim); font-size:12.5px; width:100%; }
+  main { flex:1; overflow-y:auto; padding:22px 0 10px; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 18px; }
+  .msg { margin: 0 0 16px; display:flex; }
+  .msg.user { justify-content:flex-end; }
+  .bubble { max-width: 92%; padding: 10px 14px; border-radius: 12px; white-space:normal; overflow-wrap:break-word; }
+  .user .bubble { background: var(--user-bg); }
+  .agent .bubble { background: var(--panel); border:1px solid var(--line); width:100%; max-width:100%; }
+  .bubble pre { background: var(--panel2); border:1px solid var(--line); border-radius:8px;
+                padding:10px 12px; overflow-x:auto; font: 12.5px/1.5 var(--mono); }
+  .bubble code { font: 0.92em var(--mono); background:var(--panel2); padding:1px 5px; border-radius:5px; }
+  .bubble pre code { background:none; padding:0; }
+  .tool { display:flex; gap:8px; align-items:baseline; margin:6px 0; padding:6px 10px;
+          background: var(--panel2); border-left:3px solid var(--orange); border-radius:6px;
+          font: 12.5px/1.5 var(--mono); color:var(--dim); overflow-wrap:anywhere; }
+  .tool b { color: var(--orange); font-weight:600; flex:none; }
+  .sysline { color:var(--dim); font-size:12.5px; margin:4px 0 14px; }
+  .errline { color:var(--red); font-size:13px; margin:4px 0 14px; white-space:pre-wrap; }
+  .files { margin: 8px 0 2px; }
+  .fileslabel { color:var(--dim); font-size:12.5px; margin-bottom:5px; }
+  .filechip { display:inline-flex; align-items:center; gap:6px; margin:0 8px 6px 0;
+              padding:5px 11px; border:1px solid var(--line); border-radius:999px;
+              background:var(--panel2); font: 12.5px var(--mono); cursor:pointer; }
+  .filechip:hover { border-color: var(--blue); }
+  .filechip .ext { color: var(--blue); font-weight:700; }
+  .filechip a { color: var(--dim); text-decoration:none; font-size:13px; }
+  .filechip a:hover { color: var(--blue); }
+  .preview { margin: 4px 0 10px; }
+  .preview iframe { width:100%; height:520px; border:1px solid var(--line);
+                    border-radius:10px; background:#fff; }
+  .preview img { max-width:100%; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  .preview pre { max-height:420px; overflow:auto; }
+  .thinking { color:var(--dim); font-style:italic; }
+  .thinking::after { content:'…'; animation: dots 1.2s steps(4,end) infinite; }
+  @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
+  footer { background:var(--panel); border-top:1px solid var(--line); padding:12px 0 14px; }
+  .inputrow { display:flex; gap:10px; align-items:flex-end; }
+  textarea { flex:1; resize:none; min-height:44px; max-height:200px;
+             background:var(--panel2); color:var(--text); border:1px solid var(--line);
+             border-radius:10px; padding:11px 13px; font: inherit; }
+  textarea:focus { outline:none; border-color: var(--orange); }
+  #sendBtn { background:linear-gradient(90deg, var(--red), var(--orange)); color:#fff;
+             border:none; font-weight:600; padding:11px 20px; }
+  .hint { color:var(--dim); font-size:12px; margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">ASCEND <small>· web</small></div>
+  <div class="badges">
+    <span class="badge ncsu">NC STATE</span>
+    <span class="badge duke">DUKE</span>
+  </div>
+  <select id="resource" title="which resource the agent works on"></select>
+  <button id="newChat" title="start a fresh conversation">New chat</button>
+  <button id="stopBtn">Stop</button>
+  <div class="meta" id="meta"></div>
+  <div id="note"></div>
+</header>
+<main><div class="wrap" id="chat"></div></main>
+<footer>
+  <div class="wrap">
+    <div class="inputrow">
+      <textarea id="input" placeholder="Ask the agent — e.g. “check the queue on NCShare” or “submit a 1-GPU test job”"></textarea>
+      <button id="sendBtn">Send</button>
+    </div>
+    <div class="hint">Enter to send · Shift+Enter for a newline · conversation continues until “New chat”</div>
+    <div class="credit">ASCEND-Web · created by Paul Liu, Uthpala Herath, and Andrew Petersen ·
+      <a href="https://arxiv.org/abs/2609.32868" target="_blank" rel="noopener">paper: arXiv:2609.32868</a></div>
+    <div class="credit">© 2026 NC State University AI Hub for Science, OIT &amp; Duke University OIT</div>
+  </div>
+</footer>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+try { document.cookie = 'ascend_token=' + TOKEN + '; path=/; SameSite=Strict'; } catch(e){}
+const $ = id => document.getElementById(id);
+const chatEl = $('chat'), input = $('input'), resourceSel = $('resource');
+let CONFIG = null, sessionIds = {}, runId = null, busy = false;
+
+// ---------- tiny markdown ----------
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function md(src){
+  const parts = src.split(/```/);
+  let out = '';
+  for (let i = 0; i < parts.length; i++){
+    if (i % 2 === 1){                       // code fence
+      let body = parts[i].replace(/^[\w+-]*\n/, m => m); // keep lang line out
+      const nl = body.indexOf('\n');
+      if (nl >= 0 && /^[\w+-]*$/.test(body.slice(0,nl))) body = body.slice(nl+1);
+      out += '<pre><code>' + esc(body) + '</code></pre>';
+    } else {
+      let t = esc(parts[i]);
+      t = t.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+      t = t.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+      t = t.replace(/^### (.*)$/gm, '<b>$1</b>');
+      t = t.replace(/^## (.*)$/gm, '<b>$1</b>');
+      t = t.replace(/^# (.*)$/gm, '<b>$1</b>');
+      t = t.replace(/^[-*] (.*)$/gm, '&nbsp;•&nbsp;$1');
+      t = t.replace(/\n/g, '<br>');
+      out += t;
+    }
+  }
+  return out;
+}
+
+// ---------- rendering ----------
+function scrollDown(){ chatEl.parentElement.scrollTop = chatEl.parentElement.scrollHeight; }
+function addUser(text){
+  const d = document.createElement('div'); d.className = 'msg user';
+  d.innerHTML = '<div class="bubble"></div>'; d.firstChild.textContent = text;
+  chatEl.appendChild(d); scrollDown();
+}
+function addAgentBubble(){
+  const d = document.createElement('div'); d.className = 'msg agent';
+  const b = document.createElement('div'); b.className = 'bubble';
+  b.innerHTML = '<span class="thinking">agent working</span>';
+  d.appendChild(b); chatEl.appendChild(d); scrollDown();
+  return b;
+}
+function addSys(text, err){
+  const d = document.createElement('div');
+  d.className = err ? 'errline' : 'sysline';
+  d.textContent = text; chatEl.appendChild(d); scrollDown();
+}
+
+// ---------- API ----------
+async function loadConfig(){
+  const r = await fetch('/api/config?t=' + encodeURIComponent(TOKEN));
+  if (!r.ok){ addSys('Cannot reach the server (bad token? restart and use the printed URL).', true); return; }
+  CONFIG = await r.json();
+  resourceSel.innerHTML = '';
+  for (const res of CONFIG.resources){
+    const o = document.createElement('option');
+    o.value = res.name;
+    o.textContent = res.label + (res.exists ? '' : '  (dir will be created)');
+    resourceSel.appendChild(o);
+  }
+  updateMeta();
+}
+function currentRes(){ return CONFIG.resources.find(r => r.name === resourceSel.value); }
+function updateMeta(){
+  const res = currentRes(); if (!res) return;
+  $('meta').textContent = res.dir;
+  $('note').textContent = res.note || '';
+  const sid = sessionIds[res.name];
+  addSys(sid ? ('Resource: ' + res.label + ' — continuing session') : ('Resource: ' + res.label));
+}
+
+// ---------- result files ----------
+const EMBED_FRAME = ['html','htm','pdf'];
+const EMBED_IMG   = ['png','jpg','jpeg','gif','svg','webp'];
+const EMBED_TEXT  = ['txt','md','csv','json','log','out','err','py','sh','sbatch','yaml','yml'];
+
+function fileUrl(resource, path){
+  return '/files/' + encodeURIComponent(resource) + '/' +
+         path.split('/').map(encodeURIComponent).join('/');
+}
+function human(n){
+  if (n > 1048576) return (n/1048576).toFixed(1) + ' MB';
+  if (n > 1024) return (n/1024).toFixed(0) + ' KB';
+  return n + ' B';
+}
+function renderFiles(bubble, resource, files){
+  const box = document.createElement('div'); box.className = 'files';
+  const lab = document.createElement('div'); lab.className = 'fileslabel';
+  lab.textContent = 'Files created or updated in the project folder — click to view:';
+  box.appendChild(lab);
+  const previews = document.createElement('div');
+  for (const f of files){
+    const ext = (f.path.split('.').pop() || '').toLowerCase();
+    const url = fileUrl(resource, f.path);
+    const chip = document.createElement('span'); chip.className = 'filechip';
+    const e = document.createElement('span'); e.className = 'ext'; e.textContent = ext || 'file';
+    const n = document.createElement('span'); n.textContent = f.path + ' · ' + human(f.size);
+    const a = document.createElement('a'); a.href = url; a.target = '_blank';
+    a.title = 'open in a new tab'; a.textContent = '↗';
+    a.onclick = ev => ev.stopPropagation();
+    chip.appendChild(e); chip.appendChild(n); chip.appendChild(a);
+    let pv = null;
+    chip.onclick = () => {
+      if (pv){ pv.remove(); pv = null; return; }         // toggle off
+      pv = document.createElement('div'); pv.className = 'preview';
+      if (EMBED_FRAME.includes(ext)){
+        const fr = document.createElement('iframe'); fr.src = url; pv.appendChild(fr);
+      } else if (EMBED_IMG.includes(ext)){
+        const im = document.createElement('img'); im.src = url; pv.appendChild(im);
+      } else if (EMBED_TEXT.includes(ext) || f.size < 500000){
+        const pre = document.createElement('pre'); pre.textContent = 'loading…';
+        pv.appendChild(pre);
+        fetch(url).then(r => r.text()).then(t => {
+          pre.textContent = t.length > 200000 ? t.slice(0, 200000) + '\n… (truncated)' : t;
+        }).catch(e => { pre.textContent = 'could not load: ' + e; });
+      } else {
+        window.open(url, '_blank'); pv = null; return;
+      }
+      previews.appendChild(pv); scrollDown();
+    };
+    box.appendChild(chip);
+  }
+  box.appendChild(previews);
+  bubble.appendChild(box); scrollDown();
+}
+
+async function send(){
+  if (busy) return;
+  const text = input.value.trim(); if (!text || !CONFIG) return;
+  const res = currentRes();
+  input.value = ''; autoGrow();
+  addUser(text);
+  busy = true; $('sendBtn').disabled = true; $('stopBtn').style.display = 'inline-block';
+  const bubble = addAgentBubble();
+  let textBuf = '', textSpan = null;
+
+  function ensureTextSpan(){
+    if (!textSpan){
+      const t = bubble.querySelector('.thinking'); if (t) t.remove();
+      textSpan = document.createElement('div'); bubble.appendChild(textSpan);
+    }
+    return textSpan;
+  }
+  function handle(ev){
+    if (ev.type === 'start'){ runId = ev.run_id; }
+    else if (ev.type === 'session'){ sessionIds[res.name] = ev.session_id; }
+    else if (ev.type === 'text'){
+      textBuf += (textBuf ? '\n\n' : '') + ev.text;
+      ensureTextSpan().innerHTML = md(textBuf); scrollDown();
+    }
+    else if (ev.type === 'tool'){
+      const t = bubble.querySelector('.thinking'); if (t) t.remove();
+      const d = document.createElement('div'); d.className = 'tool';
+      const b = document.createElement('b'); b.textContent = ev.name;
+      const s = document.createElement('span'); s.textContent = ev.summary || '';
+      d.appendChild(b); d.appendChild(s); bubble.appendChild(d);
+      textSpan = null;                      // next text goes below the tool line
+      textBuf = '';
+      scrollDown();
+    }
+    else if (ev.type === 'result'){
+      if (ev.session_id) sessionIds[res.name] = ev.session_id;
+      if (ev.is_error && ev.result){ addSys(ev.result, true); }
+      const t = bubble.querySelector('.thinking'); if (t) t.remove();
+      if (!bubble.childNodes.length){ bubble.innerHTML = md(ev.result || '(no output)'); }
+      let m = [];
+      if (ev.duration_ms) m.push((ev.duration_ms/1000).toFixed(1) + 's');
+      if (m.length) addSys('done · ' + m.join(' · '));
+    }
+    else if (ev.type === 'files' && ev.files && ev.files.length){
+      renderFiles(bubble, ev.resource, ev.files);
+    }
+    else if (ev.type === 'error'){
+      const t = bubble.querySelector('.thinking'); if (t) t.remove();
+      addSys(ev.error + (ev.stderr ? ('\n' + ev.stderr) : ''), true);
+    }
+  }
+
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ t: TOKEN, message: text, resource: res.name,
+                             session_id: sessionIds[res.name] || null })
+    });
+    if (!r.ok){
+      const e = await r.json().catch(() => ({}));
+      addSys(e.error || ('server error ' + r.status), true);
+    } else {
+      const reader = r.body.getReader(); const dec = new TextDecoder();
+      let buf = '';
+      for (;;){
+        const {done, value} = await reader.read(); if (done) break;
+        buf += dec.decode(value, {stream:true});
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0){
+          const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          for (const line of chunk.split('\n')){
+            if (line.startsWith('data: ')){
+              try { handle(JSON.parse(line.slice(6))); } catch(e){}
+            }
+          }
+        }
+      }
+    }
+  } catch(e){ addSys('connection lost: ' + e, true); }
+  const t = bubble.querySelector('.thinking'); if (t) t.remove();
+  if (!bubble.childNodes.length) bubble.textContent = '(no output)';
+  busy = false; runId = null;
+  $('sendBtn').disabled = false; $('stopBtn').style.display = 'none';
+  input.focus();
+}
+
+async function stopRun(){
+  if (!runId) return;
+  await fetch('/api/stop', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ t: TOKEN, run_id: runId }) });
+}
+
+function newChat(){
+  const res = currentRes(); if (res) delete sessionIds[res.name];
+  chatEl.innerHTML = ''; addSys('New conversation.');
+  input.focus();
+}
+
+function autoGrow(){
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+}
+
+$('sendBtn').onclick = send;
+$('stopBtn').onclick = stopRun;
+$('newChat').onclick = newChat;
+resourceSel.onchange = updateMeta;
+input.addEventListener('input', autoGrow);
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); send(); }
+});
+loadConfig();
+input.focus();
+</script>
+</body>
+</html>

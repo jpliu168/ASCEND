@@ -12,6 +12,7 @@
 #   ./install.sh add                       # link YOUR OWN HPC or workstation
 #                                          #   (any campus: UNC, Duke, ... or a lab box)
 #   ./install.sh router                    # just the ascend-all front door
+#   ./install.sh web                       # ascend-web: browser chat UI (see web/)
 #
 # Everything installs into ~/.local/bin (symlinks) and ~/.claude (skills and
 # statusline). Nothing is copied out of this clone, so KEEP THE CLONE -- a
@@ -47,13 +48,18 @@ case "$TARGET" in
   hurricane)  bash "$HERE/hurricane/setup-hurricane.sh";  install_router ;;
   add|custom) bash "$HERE/custom/setup-custom.sh";        install_router ;;
   router)     install_router ;;
+  web)        bash "$HERE/web/install.sh" ;;
   -h|--help|help)
     sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  *) die "unknown target '$TARGET' (expected: all, hazel, ncshare, hurricane, add, router)" ;;
+  *) die "unknown target '$TARGET' (expected: all, hazel, ncshare, hurricane, add, router, web)" ;;
 esac
 
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) : ;;
   *) say "add ~/.local/bin to your PATH:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
 esac
-say "done -- verify from a NEW terminal:  ascend-$TARGET --check   (front door: ascend-all)"
+if [ "$TARGET" = web ]; then
+  say "done -- start it from a NEW terminal:  ascend-web"
+else
+  say "done -- verify from a NEW terminal:  ascend-$TARGET --check   (front door: ascend-all)"
+fi

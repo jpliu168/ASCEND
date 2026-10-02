@@ -1,0 +1,25 @@
+#!/bin/bash
+# ascend-web — launch the ASCEND-Web local chat server.
+# Equivalent to: cd ~/agents/ascend-web && python3 ascend-web.py
+# Symlink-safe: resolves its own real location, so it works from ~/.local/bin.
+# All arguments pass through (e.g. ascend-web --port 9000 --no-browser).
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in
+    /*) ;;
+    *) SOURCE="$DIR/$SOURCE" ;;
+  esac
+done
+HERE="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ascend-web: python3 not found" >&2
+  exit 1
+fi
+
+cd "$ROOT" || exit 1
+exec python3 "$ROOT/ascend-web.py" "$@"

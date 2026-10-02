@@ -1,0 +1,34 @@
+{
+  "host": "127.0.0.1",
+  "port": 8765,
+  "claude_bin": "",
+  "permission_mode": "bypassPermissions",
+  "allowed_tools": [],
+  "open_browser": true,
+  "resources": [
+    {
+      "name": "ncshare",
+      "label": "NCShare (H200 cluster)",
+      "dir": "~/agents/ncshare/projects/web",
+      "note": "Runs per-command over the ncshare-agent ssh aliases."
+    },
+    {
+      "name": "hazel",
+      "label": "Hazel login node (scheduling/env only)",
+      "dir": "~/agents/ncsuhpc/projects-hazel/web",
+      "note": "Needs the 'hazel' ssh link warm — run 'ssh hazel' once (lasts 8h)."
+    },
+    {
+      "name": "hurricane",
+      "label": "hurricane (single GPU, MEAS)",
+      "dir": "~/agents/hurricane/projects/web",
+      "note": "Direct on campus; via the hazel-vcl jump off campus."
+    },
+    {
+      "name": "local",
+      "label": "Local (this computer)",
+      "dir": "~/agents/web-projects/local",
+      "note": "Plain Claude Code on this machine, no HPC."
+    }
+  ]
+}

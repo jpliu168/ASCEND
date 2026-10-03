@@ -58,7 +58,8 @@ DEFAULT_CONFIG = {
             "name": "hazel",
             "label": "Hazel login node (scheduling/env only)",
             "dir": "~/agents/ncsuhpc/projects-hazel/web",
-            "note": "Needs the 'hazel' ssh link warm (run: ssh hazel, once per 8h)."
+            "note": "Needs the 'hazel' ssh link warm (run: ssh hazel, once per 8h).",
+            "queue_cmd": "ssh hazel 'squeue -u $USER -h -o \"%i|%T|%M|%j\"'"
         },
         {
             "name": "hurricane",
@@ -113,6 +114,7 @@ class State:
         self.lock = threading.Lock()
         self.runs = {}        # run_id -> Run
         self.busy_dirs = set()  # one agent at a time per working dir
+        self.job_cache = {}   # resource -> {"ts": float, "payload": dict}
 
     def register(self, run_id, run):
         with self.lock:
@@ -285,12 +287,58 @@ class Handler(BaseHTTPRequestHandler):
                 "permission_mode": CFG["permission_mode"],
             })
 
+        if url.path == "/api/jobs":
+            if not self._check_token(query=q):
+                return self._deny("bad token")
+            return self._jobs((q.get("resource") or [""])[0],
+                              bool((q.get("force") or [""])[0]))
+
         if url.path.startswith("/files/"):
             if not self._check_token(query=q):
                 return self._deny("bad token")
             return self._serve_file(url.path)
 
         self._send_json({"error": "not found"}, 404)
+
+    def _jobs(self, resource, force=False):
+        """Slurm queue snapshot for the resource's configured queue_cmd.
+        Cheap (no agent): one ssh/squeue, cached 60 s so browser polling
+        never hammers the login node."""
+        res = next((r for r in CFG["resources"] if r["name"] == resource), None)
+        if res is None:
+            return self._send_json({"error": "unknown resource"}, 404)
+        cmd = res.get("queue_cmd") or ""
+        if not cmd:
+            return self._send_json({"supported": False})
+        now = time.time()
+        with STATE.lock:
+            cached = STATE.job_cache.get(resource)
+            if cached and now - cached["ts"] < (5 if force else 60):
+                return self._send_json(cached["payload"])
+        env = dict(os.environ)
+        extra = os.pathsep.join(os.path.expanduser(p) for p in ("~/.local/bin", "~/bin"))
+        env["PATH"] = extra + os.pathsep + env.get("PATH", "")
+        payload = {"supported": True, "fetched_at": now, "jobs": []}
+        try:
+            out = subprocess.run(cmd, shell=True, env=env, capture_output=True,
+                                 text=True, timeout=30)
+            if out.returncode != 0:
+                payload["error"] = (out.stderr or "queue command failed").strip()[-300:]
+            else:
+                for line in out.stdout.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = (line.split("|") + ["", "", "", ""])[:4]
+                    payload["jobs"].append({"id": parts[0], "state": parts[1],
+                                            "elapsed": parts[2], "name": parts[3]})
+        except subprocess.TimeoutExpired:
+            payload["error"] = "queue command timed out (link cold?)"
+        except OSError as e:
+            payload["error"] = str(e)
+        with STATE.lock:
+            STATE.job_cache[resource] = {"ts": now, "payload": payload}
+        return self._send_json(payload)
 
     def _serve_file(self, path):
         rest = unquote(path[len("/files/"):])

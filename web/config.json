@@ -16,7 +16,8 @@
       "name": "hazel",
       "label": "Hazel login node (scheduling/env only)",
       "dir": "~/agents/ncsuhpc/projects-hazel/web",
-      "note": "Needs the 'hazel' ssh link warm — run 'ssh hazel' once (lasts 8h)."
+      "note": "Needs the 'hazel' ssh link warm \u2014 run 'ssh hazel' once (lasts 8h).",
+      "queue_cmd": "ssh hazel 'squeue -u $USER -h -o \"%i|%T|%M|%j\"'"
     },
     {
       "name": "hurricane",

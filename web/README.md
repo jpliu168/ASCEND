@@ -105,6 +105,28 @@ on a cluster aren't. So for cluster runs, just ask the agent: *"copy the
 report back to the project folder"* (scp/rsync over the same ssh aliases)
 and it will appear as a chip.
 
+## Job monitoring
+
+Between messages the agent is idle — nothing runs. But for resources with a
+`queue_cmd` in `config.json` (Hazel ships with one: `ssh hazel 'squeue -u
+$USER …'`), the page shows a live job strip in the header: job id, state
+(RUNNING / PENDING), elapsed time, name. The browser refreshes it about
+every two minutes through the server, which runs the one squeue over your
+multiplexed ssh link and caches it for 60 s — no agent, no tokens, just one
+cheap command. Close the page and the polling stops.
+
+Next to the strip is a **Watch** toggle. With it on, when the queue goes
+from having jobs to empty, the page automatically sends the agent one
+message — "a watched job left the queue: check whether it completed, look
+at the output, report" — which appears in the chat like any other turn (so
+one agent run, only when something actually finished, not on a timer). If
+the agent is mid-run at that moment, the check fires right after.
+
+To add a strip for another resource, set its `queue_cmd`. For NCShare,
+note the `ncshare-agent` alias provisions a compute job on every
+connection, so do NOT point queue_cmd at it; use a plain login alias if
+you have one.
+
 ## How it works
 
 ```

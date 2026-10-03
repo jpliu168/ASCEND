@@ -152,3 +152,31 @@ H200 / long batch with simple provisioning → **NCShare** (`ascend-ncshare`).
 Quick single-GPU interactive job → **hurricane** (`ascend-hurricane`, no queue).
 You run ON the user's Mac, so you may check live availability with
 `ascend-probe` first; the user can exit and run `ascend-all`.
+
+## Self-improvement: capture what you learn as draft skills
+
+When a procedure in this session has proved itself — it ran successfully,
+took several non-obvious steps, and is likely to recur (a build recipe, a
+queue workflow, a report format, a recovery pattern) — capture it before
+the session ends as a DRAFT skill in this project:
+
+    ./skills-draft/<short-name>/SKILL.md
+
+Give it YAML frontmatter (`name:`, `description:` — one line saying when a
+future session should use it), a `provenance:` line (today's date, this
+resource, the evidence: job IDs, files), then the steps, including the
+mistakes to avoid. Helper scripts go in the same folder.
+
+- Draft only: NEVER write into `~/.claude/skills` yourself. Drafts are
+  inert until a human promotes them — the same house rule as lessons:
+  nothing auto-applies.
+- One skill per job. If an installed or shared skill already covers the
+  area, draft a proposed edit to it rather than a new overlapping skill.
+- No usernames, hostnames, or private paths — tokenize them.
+- End your reply by telling the user what you drafted, and that
+  `ascend-skill install <name>` promotes it for every future session here,
+  while `ascend-skill share <name>` adds it to the shared library in the
+  ASCEND repository for all users.
+
+Facts (a trap, a version pin, a scheduler quirk) still go to the knowledge
+base as lessons; skills are for reusable procedures.

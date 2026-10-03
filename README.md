@@ -274,6 +274,31 @@ Each `ascend-hazel` launch appends one line to a shared, append-only log on Haze
 
 ---
 
+## Self-improving: harvested skills
+
+ASCEND gets smarter with use. Beyond the per-site knowledge base of
+provenance-tagged lessons, every agent session is instructed to capture
+procedures that proved themselves — a working build recipe, a queue
+workflow, a recovery pattern — as **draft skills** in the project directory
+(`skills-draft/<name>/SKILL.md`, with a `provenance:` line naming the date,
+resource and evidence). Drafts are inert and show up like any other result
+file (in ASCEND-Web they appear as clickable chips). A human promotes them:
+
+```
+ascend-skill list              # drafts here, installed, shared library
+ascend-skill install <name>    # -> ~/.claude/skills: every future session loads it
+ascend-skill share <name>      # -> skills-learned/ in this repo: commit + push,
+                               #    and every user gets it with git pull
+ascend-skill retire <name>     # uninstall (kept in ~/.claude/skills-retired)
+```
+
+The promotion step is deliberate — the same house rule as the knowledge
+base: nothing the agent writes applies automatically; a person reviews the
+skill (and scrubs identifiers) before it becomes standing behavior. The
+shared library lives in [`skills-learned/`](skills-learned/).
+
+---
+
 ## Repository layout
 
 ```
@@ -288,6 +313,7 @@ hurricane/                 hurricane setup, deploy, launcher, and the gpu-local 
 custom/                    bring-your-own-site wizard, deploy, launcher template, generic skills
 web/                       ascend-web, the localhost browser chat UI
 docs/                      standalone install guides and figures
+skills-learned/            shared library of promoted, human-reviewed skills
 tools/                     scripts that build the distributable zips
 ```
 

@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""
+ascend-skill -- the ASCEND skill-harvest loop (draft -> install -> share).
+
+During a session the agent captures a procedure that proved itself as a
+DRAFT skill in the project directory:
+
+    <project>/skills-draft/<name>/SKILL.md     (plus any helper files)
+
+Drafts are inert: no session loads them. This tool is how a human promotes
+them, keeping ASCEND's house rule that nothing auto-applies:
+
+    ascend-skill list                  what exists where (drafts here,
+                                       installed, shared library)
+    ascend-skill show <name>           print a skill's SKILL.md
+    ascend-skill install <name>        draft or library -> ~/.claude/skills/
+                                       (loaded by every future session here)
+    ascend-skill share <name>          installed or draft -> the ASCEND
+                                       clone's skills-learned/ (commit + push
+                                       to give it to every ASCEND user)
+    ascend-skill retire <name>         uninstall from ~/.claude/skills
+                                       (moves it to ~/.claude/skills-retired)
+
+A SKILL.md must carry YAML frontmatter with name: and description:, and a
+"provenance:" line (date, resource, evidence such as job IDs) -- install
+warns without it. Stdlib only; works on macOS system python3 and clusters.
+"""
+
+import argparse
+import datetime
+import os
+import re
+import shutil
+import sys
+
+HOME = os.path.expanduser("~")
+INSTALLED = os.path.join(HOME, ".claude", "skills")
+RETIRED = os.path.join(HOME, ".claude", "skills-retired")
+DRAFTS = os.path.join(os.getcwd(), "skills-draft")
+
+
+def clone_root():
+    """The ASCEND clone this tool lives in (bin -> common/ascend/bin)."""
+    env = os.environ.get("ASCEND_CLONE")
+    if env and os.path.isdir(env):
+        return os.path.realpath(env)
+    here = os.path.dirname(os.path.realpath(__file__))
+    cand = os.path.realpath(os.path.join(here, "..", "..", ".."))
+    if os.path.isdir(os.path.join(cand, "common", "ascend")):
+        return cand
+    return None
+
+
+def library_dir():
+    root = clone_root()
+    return os.path.join(root, "skills-learned") if root else None
+
+
+def read_meta(skill_dir):
+    p = os.path.join(skill_dir, "SKILL.md")
+    if not os.path.isfile(p):
+        return None
+    txt = open(p, encoding="utf-8", errors="replace").read()
+    meta = {"description": "", "provenance": ""}
+    m = re.match(r"\s*---\s*\n(.*?)\n---", txt, re.S)
+    front = m.group(1) if m else ""
+    for key in ("name", "description"):
+        km = re.search(r"^%s:\s*(.+)$" % key, front, re.M)
+        if km:
+            meta[key] = km.group(1).strip()
+    pm = re.search(r"^provenance:\s*(.+)$", txt, re.M | re.I)
+    if pm:
+        meta["provenance"] = pm.group(1).strip()
+    return meta
+
+
+def scan(base):
+    out = {}
+    if base and os.path.isdir(base):
+        for n in sorted(os.listdir(base)):
+            d = os.path.join(base, n)
+            if os.path.isdir(d) and os.path.isfile(os.path.join(d, "SKILL.md")):
+                out[n] = d
+    return out
+
+
+def find_skill(name, places):
+    for label, base in places:
+        d = os.path.join(base, name) if base else None
+        if d and os.path.isfile(os.path.join(d, "SKILL.md")):
+            return label, d
+    return None, None
+
+
+def say(s=""):
+    print(s)
+
+
+def cmd_list(_):
+    lib = library_dir()
+    for label, base in (("drafts in this project (./skills-draft)", DRAFTS),
+                        ("installed (~/.claude/skills)", INSTALLED),
+                        ("shared library (ASCEND clone skills-learned/)", lib)):
+        say("%s:" % label)
+        skills = scan(base)
+        if not skills:
+            say("  (none)" if base else "  (no ASCEND clone found -- set ASCEND_CLONE)")
+        for n, d in skills.items():
+            meta = read_meta(d) or {}
+            prov = meta.get("provenance") or "NO PROVENANCE LINE"
+            say("  %-28s %s" % (n, (meta.get("description") or "")[:70]))
+            say("  %-28s   provenance: %s" % ("", prov[:80]))
+        say()
+
+
+def cmd_show(a):
+    _, d = find_skill(a.name, [("draft", DRAFTS), ("installed", INSTALLED),
+                               ("library", library_dir() or "")])
+    if not d:
+        sys.exit("ascend-skill: '%s' not found as draft, installed, or in the library" % a.name)
+    sys.stdout.write(open(os.path.join(d, "SKILL.md"), encoding="utf-8",
+                          errors="replace").read())
+
+
+def check_meta(d, name):
+    meta = read_meta(d)
+    if not meta or not meta.get("name") or not meta.get("description"):
+        say("WARNING: SKILL.md lacks YAML frontmatter with name: and description: --")
+        say("         sessions may not load or trigger it correctly.")
+    if not (meta or {}).get("provenance"):
+        say("WARNING: no 'provenance:' line (date, resource, evidence such as job IDs).")
+        say("         ASCEND house rule: a skill should say what demonstrated it.")
+    return meta or {}
+
+
+def copy_skill(src, dst, force):
+    if os.path.exists(dst):
+        if not force:
+            sys.exit("ascend-skill: %s already exists (use --force to replace)" % dst)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        bak = dst + ".replaced-" + stamp
+        shutil.move(dst, bak)
+        say("existing version kept at %s" % bak)
+    shutil.copytree(src, dst)
+
+
+def cmd_install(a):
+    places = [("draft", DRAFTS)]
+    lib = library_dir()
+    if lib:
+        places.append(("library", lib))
+    label, src = find_skill(a.name, places)
+    if not src:
+        sys.exit("ascend-skill: '%s' not found in ./skills-draft or the shared library" % a.name)
+    check_meta(src, a.name)
+    os.makedirs(INSTALLED, exist_ok=True)
+    dst = os.path.join(INSTALLED, a.name)
+    copy_skill(src, dst, a.force)
+    say("installed (%s -> ~/.claude/skills/%s)" % (label, a.name))
+    say("every future session on this machine loads it; verify on the next run.")
+
+
+def cmd_share(a):
+    lib = library_dir()
+    if not lib:
+        sys.exit("ascend-skill: no ASCEND clone found (set ASCEND_CLONE to your clone path)")
+    label, src = find_skill(a.name, [("installed", INSTALLED), ("draft", DRAFTS)])
+    if not src:
+        sys.exit("ascend-skill: '%s' not found installed or as a draft" % a.name)
+    meta = check_meta(src, a.name)
+    if not meta.get("provenance") and not a.force:
+        sys.exit("refusing to share without a provenance line (--force to override)")
+    os.makedirs(lib, exist_ok=True)
+    dst = os.path.join(lib, a.name)
+    copy_skill(src, dst, a.force)
+    say("shared (%s -> %s)" % (label, dst))
+    say("review it for usernames, hostnames and private paths, then commit and push:")
+    say("  cd %s && git add skills-learned/%s && git commit && git push" % (clone_root(), a.name))
+    say("other users get it with: git pull && ascend-skill install %s" % a.name)
+
+
+def cmd_retire(a):
+    src = os.path.join(INSTALLED, a.name)
+    if not os.path.isdir(src):
+        sys.exit("ascend-skill: '%s' is not installed" % a.name)
+    os.makedirs(RETIRED, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = os.path.join(RETIRED, "%s-%s" % (a.name, stamp))
+    shutil.move(src, dst)
+    say("retired ~/.claude/skills/%s -> %s" % (a.name, dst))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="ascend-skill",
+                                 description="ASCEND skill-harvest: draft -> install -> share")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("list")
+    p = sub.add_parser("show"); p.add_argument("name")
+    p = sub.add_parser("install"); p.add_argument("name"); p.add_argument("--force", action="store_true")
+    p = sub.add_parser("share"); p.add_argument("name"); p.add_argument("--force", action="store_true")
+    p = sub.add_parser("retire"); p.add_argument("name")
+    a = ap.parse_args()
+    if a.cmd == "list":
+        cmd_list(a)
+    elif a.cmd == "show":
+        cmd_show(a)
+    elif a.cmd == "install":
+        cmd_install(a)
+    elif a.cmd == "share":
+        cmd_share(a)
+    elif a.cmd == "retire":
+        cmd_retire(a)
+    else:
+        ap.print_help()
+
+
+if __name__ == "__main__":
+    main()

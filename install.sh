@@ -37,6 +37,7 @@ find "$HERE" -type d -name bin -exec sh -c 'chmod +x "$1"/* 2>/dev/null || true'
 
 install_router(){
   mkdir -p "$HOME/.local/bin"
+  ln -sfn "$HERE/common/ascend/bin/ascend-skill" "$HOME/.local/bin/ascend-skill"
   bash "$HERE/common/ascend-all/install.sh"
 }
 

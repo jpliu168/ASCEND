@@ -83,11 +83,15 @@ can do less.
 ## Choosing the model
 
 A dropdown next to **Send** picks which Claude model handles your next
-message (Default / Sonnet / Opus / Haiku, editable via `models` in
-`config.json`). The choice is passed straight to `claude --model`, applies
-per message — you can switch mid-conversation — and is remembered by the
-browser. "Default model" uses whatever your Claude Code CLI is configured
-to use; hover the dropdown after a reply to see the exact model that ran.
+message (Default / Fable 5 medium / Sonnet / Opus / Haiku, editable via
+`models` in `config.json`). The choice is passed straight to
+`claude --model` (plus `--effort` when the entry sets one, as the Fable 5
+entry does), applies per message — you can switch mid-conversation — and is
+remembered by the browser. "Default" is whatever your Claude Code CLI is
+configured to use: the dropdown shows it when it can tell (`$ANTHROPIC_MODEL`
+or the `model` key in `~/.claude/settings.json`), and otherwise fills in the
+real name after your first reply; hover the dropdown to see the exact model
+that ran.
 
 ## Config reference (`config.json`)
 
@@ -97,7 +101,7 @@ to use; hover the dropdown after a reply to see the exact model that ran.
 | `claude_bin` | path to the `claude` CLI; empty = auto-detect (PATH, then `~/.local/bin/claude`) |
 | `permission_mode` | passed to `claude --permission-mode` (default `bypassPermissions`) |
 | `allowed_tools` | optional `--allowedTools` list |
-| `models` | the model dropdown next to Send: `{"id","label"}` entries; the id is passed as `claude --model` (ships with Default / Sonnet / Opus / Haiku; `""` = the CLI's default) |
+| `models` | the model dropdown next to Send: `{"id","label"[,"effort"]}` entries; id → `claude --model`, effort → `claude --effort` (ships with Default / Fable 5 medium / Sonnet / Opus / Haiku; id `""` = the CLI's default) |
 | `open_browser` | auto-open the URL on start |
 | `resources` | the dropdown: `name`, `label`, `dir` (working dir for the agent), `note` |
 

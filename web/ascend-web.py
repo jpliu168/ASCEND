@@ -54,6 +54,7 @@ DEFAULT_CONFIG = {
     "allowed_tools": [],          # optional extra --allowedTools entries
     "models": [                   # the model dropdown; id "" = the CLI's default
         {"id": "",       "label": "Default model"},
+        {"id": "fable", "effort": "medium", "label": "Fable 5 — medium"},
         {"id": "sonnet", "label": "Sonnet — fast, everyday"},
         {"id": "opus",   "label": "Opus — most capable"},
         {"id": "haiku",  "label": "Haiku — fastest, cheapest"}
@@ -115,6 +116,24 @@ def find_claude(cfg):
     if os.path.exists(home_claude):
         return home_claude
     return None
+
+
+def default_model():
+    """Best-effort: what 'Default model' resolves to for this user's CLI.
+    Checks $ANTHROPIC_MODEL, then the model key in ~/.claude/settings.json.
+    Empty string = the CLI's own built-in default (the UI also learns the
+    real one from the first run's init event)."""
+    m = os.environ.get("ANTHROPIC_MODEL", "").strip()
+    if m:
+        return m
+    try:
+        with open(os.path.expanduser("~/.claude/settings.json")) as f:
+            v = json.load(f).get("model")
+        if isinstance(v, str):
+            return v.strip()
+    except (OSError, ValueError):
+        pass
+    return ""
 
 
 class Run:
@@ -303,6 +322,7 @@ class Handler(BaseHTTPRequestHandler):
                 "claude": CLAUDE or "",
                 "permission_mode": CFG["permission_mode"],
                 "models": CFG.get("models") or [],
+                "default_model": default_model(),
             })
 
         if url.path.startswith("/static/vendor/"):
@@ -581,6 +601,7 @@ class Handler(BaseHTTPRequestHandler):
         resource = body.get("resource") or ""
         session_id = body.get("session_id") or None
         model = (body.get("model") or "").strip()
+        effort = (body.get("effort") or "").strip()
         run_id = str(body.get("run_id") or secrets.token_hex(8))
 
         res = next((r for r in CFG["resources"] if r["name"] == resource), None)
@@ -642,11 +663,16 @@ class Handler(BaseHTTPRequestHandler):
         allowed = CFG.get("allowed_tools") or []
         if allowed:
             cmd += ["--allowedTools", ",".join(allowed)]
-        if model:
-            # only ids from the configured dropdown (an empty models list = allow any)
-            ids = {(m.get("id") or "") for m in (CFG.get("models") or [])}
-            if not ids or model in ids:
+        if model or effort:
+            # only (model, effort) pairs from the configured dropdown
+            # (an empty models list = allow any model; effort always validated)
+            entries = CFG.get("models") or []
+            pairs = {((m.get("id") or ""), (m.get("effort") or "")) for m in entries}
+            ok = (not entries) or ((model, effort) in pairs)
+            if ok and model:
                 cmd += ["--model", model]
+            if ok and effort and effort in ("low", "medium", "high", "xhigh", "max"):
+                cmd += ["--effort", effort]
         if session_id:
             cmd += ["--resume", session_id]
 

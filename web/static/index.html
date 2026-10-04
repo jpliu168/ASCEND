@@ -236,7 +236,10 @@ async function loadConfig(){
   const msel = $('modelSel'); msel.innerHTML = '';
   for (const m of (CONFIG.models && CONFIG.models.length ? CONFIG.models : [{id:'',label:'Default model'}])){
     const o = document.createElement('option');
-    o.value = m.id || ''; o.textContent = m.label || m.id;
+    o.value = (m.id || '') + '|' + (m.effort || '');
+    o.textContent = m.label || m.id;
+    if (!m.id && CONFIG.default_model)
+      o.textContent = 'Default — ' + CONFIG.default_model;
     msel.appendChild(o);
   }
   try {
@@ -349,7 +352,14 @@ async function sendMessage(text, isAuto){
     if (ev.type === 'start'){ runId = ev.run_id; }
     else if (ev.type === 'session'){
       sessionIds[res.name] = ev.session_id;
-      if (ev.model) $('modelSel').title = 'running model: ' + ev.model;
+      if (ev.model){
+        $('modelSel').title = 'running model: ' + ev.model;
+        const msel = $('modelSel');                 // learn what "Default" really is
+        if (msel.value === '|'){
+          const o = [...msel.options].find(o => o.value === '|');
+          if (o) o.textContent = 'Default — ' + ev.model;
+        }
+      }
     }
     else if (ev.type === 'text'){
       textBuf += (textBuf ? '\n\n' : '') + ev.text;
@@ -389,7 +399,8 @@ async function sendMessage(text, isAuto){
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ t: TOKEN, message: text, resource: res.name,
                              session_id: sessionIds[res.name] || null,
-                             model: $('modelSel').value || null })
+                             model: ($('modelSel').value.split('|')[0]) || null,
+                             effort: ($('modelSel').value.split('|')[1]) || null })
     });
     if (!r.ok){
       const e = await r.json().catch(() => ({}));

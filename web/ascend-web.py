@@ -150,6 +150,7 @@ class State:
 STATE = State()
 CFG = None
 TOKEN = None
+PORT = None
 CLAUDE = None
 
 
@@ -589,6 +590,36 @@ class Handler(BaseHTTPRequestHandler):
                     {"error": "an agent run is already in progress for this resource — wait or stop it"}, 409)
             STATE.busy_dirs.add(workdir)
 
+        # cross-instance lock: another ascend-web (or a future one) on this
+        # machine must not run a second agent in the same project directory
+        lockfile = os.path.join(workdir, ".ascend-web.lock")
+        try:
+            holder = json.load(open(lockfile))
+            pid = int(holder.get("pid", 0))
+            alive = False
+            if pid and pid != os.getpid():
+                try:
+                    os.kill(pid, 0)
+                    alive = True
+                except OSError:
+                    alive = False
+            if alive:
+                with STATE.lock:
+                    STATE.busy_dirs.discard(workdir)
+                return self._send_json({"error":
+                    "another ASCEND-Web instance (pid %s, port %s, since %s) is working in this "
+                    "project directory — use that window for this project, or pick a different "
+                    "resource/project here" % (pid, holder.get("port", "?"),
+                                               holder.get("started", "?"))}, 409)
+        except (OSError, ValueError):
+            pass  # no lock, or unreadable/stale — we take it
+        try:
+            with open(lockfile, "w") as lf:
+                json.dump({"pid": os.getpid(), "port": PORT,
+                           "started": time.strftime("%Y-%m-%d %H:%M:%S")}, lf)
+        except OSError:
+            pass
+
         # SSE response
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -672,6 +703,11 @@ class Handler(BaseHTTPRequestHandler):
             STATE.unregister(run_id)
             with STATE.lock:
                 STATE.busy_dirs.discard(workdir)
+            try:   # release the cross-instance lock if it is ours
+                if json.load(open(lockfile)).get("pid") == os.getpid():
+                    os.remove(lockfile)
+            except (OSError, ValueError):
+                pass
 
         try:
             if run.stopped:
@@ -728,7 +764,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global CFG, TOKEN, CLAUDE
+    global CFG, TOKEN, CLAUDE, PORT
     ap = argparse.ArgumentParser(description="ASCEND-Web local chat server")
     ap.add_argument("--config", default=os.path.join(HERE, "config.json"))
     ap.add_argument("--port", type=int, default=None)
@@ -768,6 +804,7 @@ def main():
         print("error: no free port in %d-%d." % (port, port + 10))
         sys.exit(1)
     port = httpd.server_address[1]
+    PORT = port
     url = "http://%s:%d/?t=%s" % (host, port, TOKEN)
 
     print()

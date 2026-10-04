@@ -507,15 +507,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if run.stopped:
                 self.wfile.write(sse({"type": "error", "error": "stopped by user"}))
-            elif proc.returncode not in (0, None) and not got_result:
+            elif not got_result:
+                # the run ended without a result event — never leave the user
+                # with a silent "(no output)": surface stderr and a hint
                 err = ""
                 try:
-                    err = (proc.stderr.read() or "")[-2000:]
+                    err = (proc.stderr.read() or "").strip()[-2000:]
                 except Exception:
                     pass
-                self.wfile.write(sse({"type": "error",
-                                      "error": "claude exited with code %s" % proc.returncode,
-                                      "stderr": err}))
+                msg = "the agent run ended without producing a reply (exit code %s)" % proc.returncode
+                if session_id:
+                    msg += " — if this repeats, try 'New chat' (the resumed session may be locked or missing)"
+                self.wfile.write(sse({"type": "error", "error": msg, "stderr": err}))
             try:
                 changed = files_changed_since(workdir, start_ts)
             except Exception:

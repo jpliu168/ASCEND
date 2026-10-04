@@ -137,7 +137,7 @@ try { document.cookie = 'ascend_token=' + TOKEN + '; path=/; SameSite=Strict'; }
 const $ = id => document.getElementById(id);
 const chatEl = $('chat'), input = $('input'), resourceSel = $('resource');
 let CONFIG = null, sessionIds = {}, runId = null, busy = false;
-let jobsPrev = {}, watchOn = {}, pendingAuto = false;
+let jobsPrev = {}, watchOn = {}, pendingAuto = false, pendingMsgs = [];
 
 // ---------- tiny markdown ----------
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -269,12 +269,22 @@ function renderFiles(bubble, resource, files){
 
 async function send(){
   const text = input.value.trim(); if (!text) return;
+  if (busy){               // agent mid-run: queue it instead of losing it
+    pendingMsgs.push(text);
+    input.value = ''; autoGrow();
+    addSys('agent is busy — queued; will send when this run finishes (' +
+           pendingMsgs.length + ' waiting)');
+    return;
+  }
   input.value = ''; autoGrow();
   await sendMessage(text, false);
 }
 
 async function sendMessage(text, isAuto){
-  if (busy || !CONFIG){ if (isAuto) pendingAuto = true; return; }
+  if (busy || !CONFIG){
+    if (isAuto) pendingAuto = true; else pendingMsgs.push(text);
+    return;
+  }
   const res = currentRes();
   addUser(text, isAuto);
   busy = true; $('sendBtn').disabled = true; $('stopBtn').style.display = 'inline-block';
@@ -357,6 +367,7 @@ async function sendMessage(text, isAuto){
   $('sendBtn').disabled = false; $('stopBtn').style.display = 'none';
   input.focus();
   setTimeout(() => pollJobs(true), 4000);   // agent may have (re)submitted jobs
+  if (pendingMsgs.length){ sendMessage(pendingMsgs.shift(), false); return; }
   if (pendingAuto){ pendingAuto = false; fireAutoCheck(); }
 }
 

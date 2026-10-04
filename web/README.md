@@ -127,6 +127,23 @@ note the `ncshare-agent` alias provisions a compute job on every
 connection, so do NOT point queue_cmd at it; use a plain login alias if
 you have one.
 
+## Built-in ssh terminal
+
+The **Terminal** button opens a real terminal in a right-side panel, connected
+to the selected resource over the same ssh aliases the agent uses (`term_cmd`
+in `config.json`: Hazel ships `ssh hazel`, hurricane `ssh hurricane`, local
+your login shell). It is a full PTY — run `squeue`, `sinfo`, `htop`, edit
+files, anything you'd do in a normal terminal — served only on localhost with
+the same access token, using a bundled copy of xterm.js (no CDN needed).
+
+This is also the answer to a **cold link**: when the multiplexed ssh link has
+expired, the terminal is where you type your password and Duo — warming the
+link for the agent too (same ControlMaster socket). The job strip's error
+line links straight to it ("open Terminal to log in"). One terminal per
+resource; it keeps running when you hide the panel, follows the resource
+dropdown, and "restart" kills and reconnects it. The agent and the terminal
+are independent — the agent never reads what you type there.
+
 ## How it works
 
 ```

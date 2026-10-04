@@ -21,16 +21,22 @@ Usage:
 """
 
 import argparse
+import base64
+import fcntl
 import json
 import mimetypes
 import os
 import posixpath
+import pty
 import secrets
 import shlex
 import shutil
 import signal
+import struct
 import subprocess
+import select as _select
 import sys
+import termios
 import threading
 import time
 import webbrowser
@@ -59,19 +65,22 @@ DEFAULT_CONFIG = {
             "label": "Hazel login node (scheduling/env only)",
             "dir": "~/agents/ncsuhpc/projects-hazel/web",
             "note": "Needs the 'hazel' ssh link warm (run: ssh hazel, once per 8h).",
-            "queue_cmd": "ssh hazel 'squeue -u $USER -h -o \"%i|%T|%M|%j\"'"
+            "queue_cmd": "ssh hazel 'squeue -u $USER -h -o \"%i|%T|%M|%j\"'",
+            "term_cmd": "ssh hazel"
         },
         {
             "name": "hurricane",
             "label": "hurricane (single GPU, MEAS)",
             "dir": "~/agents/hurricane/projects/web",
-            "note": "Direct on campus; via the hazel-vcl jump off campus."
+            "note": "Direct on campus; via the hazel-vcl jump off campus.",
+            "term_cmd": "ssh hurricane"
         },
         {
             "name": "local",
             "label": "Local (this computer)",
             "dir": "~/agents/web-projects/local",
-            "note": "Plain Claude Code on this machine, no HPC."
+            "note": "Plain Claude Code on this machine, no HPC.",
+            "term_cmd": "$SHELL"
         }
     ]
 }
@@ -115,6 +124,7 @@ class State:
         self.runs = {}        # run_id -> Run
         self.busy_dirs = set()  # one agent at a time per working dir
         self.job_cache = {}   # resource -> {"ts": float, "payload": dict}
+        self.terms = {}       # resource -> {"pid", "fd", "gen"} (one PTY each)
 
     def register(self, run_id, run):
         with self.lock:
@@ -287,6 +297,26 @@ class Handler(BaseHTTPRequestHandler):
                 "permission_mode": CFG["permission_mode"],
             })
 
+        if url.path.startswith("/static/vendor/"):
+            # bundled libraries (xterm.js) — public, same-origin page assets
+            name = posixpath.basename(url.path)
+            full = os.path.join(STATIC_DIR, "vendor", name)
+            if not os.path.isfile(full):
+                return self._send_json({"error": "not found"}, 404)
+            ctype = "text/css" if name.endswith(".css") else "application/javascript"
+            data = open(full, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype + "; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if url.path == "/api/term/stream":
+            if not self._check_token(query=q):
+                return self._deny("bad token")
+            return self._term_stream((q.get("resource") or [""])[0])
+
         if url.path == "/api/jobs":
             if not self._check_token(query=q):
                 return self._deny("bad token")
@@ -392,10 +422,136 @@ class Handler(BaseHTTPRequestHandler):
             ok = STATE.stop(str(body.get("run_id", "")))
             return self._send_json({"stopped": ok})
 
+        if url.path.startswith("/api/term/"):
+            return self._term_post(url.path, body)
+
         if url.path == "/api/chat":
             return self._chat(body)
 
         self._send_json({"error": "not found"}, 404)
+
+    # ---------- the ssh terminal (one PTY per resource) ----------
+
+    def _term_get(self, resource):
+        with STATE.lock:
+            return STATE.terms.get(resource)
+
+    def _term_alive(self, t):
+        if not t:
+            return False
+        try:
+            pid, st = os.waitpid(t["pid"], os.WNOHANG)
+            return pid == 0
+        except ChildProcessError:
+            return False
+
+    def _term_cleanup(self, resource):
+        with STATE.lock:
+            t = STATE.terms.pop(resource, None)
+        if t:
+            try:
+                os.close(t["fd"])
+            except OSError:
+                pass
+            try:
+                os.kill(t["pid"], signal.SIGHUP)
+            except OSError:
+                pass
+
+    def _term_post(self, path, body):
+        resource = body.get("resource") or ""
+        res = next((r for r in CFG["resources"] if r["name"] == resource), None)
+        if res is None:
+            return self._send_json({"error": "unknown resource"}, 404)
+
+        if path == "/api/term/start":
+            cmd = res.get("term_cmd") or ""
+            if not cmd:
+                return self._send_json({"supported": False})
+            if cmd == "$SHELL":
+                cmd = os.environ.get("SHELL", "/bin/bash") + " -l"
+            t = self._term_get(resource)
+            if self._term_alive(t):
+                return self._send_json({"supported": True, "started": "existing", "cmd": cmd})
+            self._term_cleanup(resource)
+            pid, fd = pty.fork()
+            if pid == 0:  # child: become the command, on the pty
+                env = dict(os.environ)
+                extra = os.pathsep.join(os.path.expanduser(p) for p in ("~/.local/bin", "~/bin"))
+                env["PATH"] = extra + os.pathsep + env.get("PATH", "")
+                env["TERM"] = "xterm-256color"
+                os.execvpe("/bin/bash", ["/bin/bash", "-lc", "exec " + cmd], env)
+            with STATE.lock:
+                STATE.terms[resource] = {"pid": pid, "fd": fd, "gen": 0}
+            return self._send_json({"supported": True, "started": "new", "cmd": cmd})
+
+        t = self._term_get(resource)
+        if path == "/api/term/input":
+            if not self._term_alive(t):
+                return self._send_json({"error": "no terminal"}, 409)
+            try:
+                os.write(t["fd"], base64.b64decode(body.get("d", "")))
+            except OSError as e:
+                return self._send_json({"error": str(e)}, 500)
+            return self._send_json({"ok": True})
+
+        if path == "/api/term/resize":
+            if not self._term_alive(t):
+                return self._send_json({"error": "no terminal"}, 409)
+            try:
+                rows = max(4, min(300, int(body.get("rows", 24))))
+                cols = max(20, min(500, int(body.get("cols", 80))))
+                fcntl.ioctl(t["fd"], termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            except (OSError, ValueError) as e:
+                return self._send_json({"error": str(e)}, 500)
+            return self._send_json({"ok": True})
+
+        if path == "/api/term/kill":
+            self._term_cleanup(resource)
+            return self._send_json({"ok": True})
+
+        return self._send_json({"error": "not found"}, 404)
+
+    def _term_stream(self, resource):
+        t = self._term_get(resource)
+        if not t:
+            return self._send_json({"error": "no terminal — start it first"}, 409)
+        with STATE.lock:
+            t["gen"] += 1
+            my_gen = t["gen"]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        fd = t["fd"]
+        try:
+            while True:
+                with STATE.lock:
+                    cur = STATE.terms.get(resource)
+                if cur is None or cur["gen"] != my_gen:
+                    break  # replaced by a newer stream, or killed
+                r, _, _ = _select.select([fd], [], [], 0.5)
+                if not r:
+                    if not self._term_alive(t):
+                        self.wfile.write(sse({"exit": True}))
+                        self.wfile.flush()
+                        self._term_cleanup(resource)
+                        break
+                    continue
+                try:
+                    data = os.read(fd, 8192)
+                except OSError:
+                    data = b""
+                if not data:
+                    self.wfile.write(sse({"exit": True}))
+                    self.wfile.flush()
+                    self._term_cleanup(resource)
+                    break
+                self.wfile.write(sse({"d": base64.b64encode(data).decode()}))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # browser closed the panel; PTY stays alive for reattach
 
     # ---------- the agent call ----------
 

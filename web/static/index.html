@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ASCEND-Web</title>
+<link rel="stylesheet" href="/static/vendor/xterm.min.css">
 <style>
   :root {
     --bg: #11151c; --panel: #1a2029; --panel2: #202835;
@@ -85,6 +86,20 @@
                     border-radius:10px; background:#fff; }
   .preview img { max-width:100%; border:1px solid var(--line); border-radius:10px; background:#fff; }
   .preview pre { max-height:420px; overflow:auto; }
+  /* --- ssh terminal drawer --- */
+  #termpanel { position:fixed; top:0; right:0; bottom:0; width:46%; min-width:420px;
+               background:#10151d; border-left:3px solid var(--orange); z-index:50;
+               display:none; flex-direction:column; }
+  body.term-open #termpanel { display:flex; }
+  body.term-open main .wrap, body.term-open footer .wrap { margin-right:max(46%, 420px); max-width:none; padding-right:30px; }
+  body.term-open header { padding-right:max(46%, 420px); }
+  #termhead { display:flex; align-items:center; gap:10px; padding:8px 14px;
+              background:#1a2029; color:#d8e2f0; font:13px var(--mono); }
+  #termhead .ttl { font-weight:700; color:#f08c3a; }
+  #termhead button { background:#242e3c; color:#d8e2f0; border:1px solid #39465a;
+                     border-radius:6px; padding:3px 10px; font-size:12px; }
+  #xterm { flex:1; padding:6px 2px 6px 8px; min-height:0; }
+  #xterm .xterm { height:100%; }
   .thinking { color:var(--dim); font-style:italic; }
   .thinking::after { content:'…'; animation: dots 1.2s steps(4,end) infinite; }
   @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
@@ -108,6 +123,7 @@
   </div>
   <select id="resource" title="which resource the agent works on"></select>
   <button id="newChat" title="start a fresh conversation">New chat</button>
+  <button id="termBtn" title="open an ssh terminal to the selected resource">Terminal</button>
   <button id="stopBtn">Stop</button>
   <div class="meta" id="meta"></div>
   <div id="note"></div>
@@ -118,6 +134,16 @@
   </div>
 </header>
 <main><div class="wrap" id="chat"></div></main>
+<aside id="termpanel">
+  <div id="termhead">
+    <span class="ttl" id="termttl">Terminal</span>
+    <span id="termcmd" style="color:#8b97a8"></span>
+    <span style="flex:1"></span>
+    <button id="termRestart" title="kill and restart this terminal">restart</button>
+    <button id="termClose" title="hide the panel (session keeps running)">✕</button>
+  </div>
+  <div id="xterm"></div>
+</aside>
 <footer>
   <div class="wrap">
     <div class="inputrow">
@@ -131,6 +157,8 @@
   </div>
 </footer>
 
+<script src="/static/vendor/xterm.min.js"></script>
+<script src="/static/vendor/addon-fit.min.js"></script>
 <script>
 const TOKEN = new URLSearchParams(location.search).get('t') || '';
 try { document.cookie = 'ascend_token=' + TOKEN + '; path=/; SameSite=Strict'; } catch(e){}
@@ -380,6 +408,11 @@ function renderJobs(payload){
   if (payload.error){
     const e = document.createElement('span'); e.className = 'err';
     e.textContent = 'queue: ' + payload.error; list.appendChild(e);
+    const a = document.createElement('a');
+    a.href = '#'; a.textContent = '→ open Terminal to log in';
+    a.style.cssText = 'color:var(--blue);margin-left:8px;text-decoration:none';
+    a.onclick = ev => { ev.preventDefault(); openTerm(); };
+    list.appendChild(a);
     return;
   }
   if (!payload.jobs.length){
@@ -446,6 +479,81 @@ function autoGrow(){
   input.style.height = Math.min(input.scrollHeight, 200) + 'px';
 }
 
+// ---------- ssh terminal panel ----------
+let term = null, fitAddon = null, termES = null, termRes = null;
+
+function b64enc(s){ return btoa(String.fromCharCode(...new TextEncoder().encode(s))); }
+function b64dec(s){ const bin = atob(s); const a = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) a[i] = bin.charCodeAt(i); return a; }
+
+async function termApi(ep, extra){
+  const r = await fetch('/api/term/' + ep, { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(Object.assign({ t: TOKEN, resource: termRes }, extra || {})) });
+  return r.ok ? r.json() : r.json().catch(() => ({})).then(e => { throw (e.error || r.status); });
+}
+
+function termSendSize(){
+  if (!term || !termRes) return;
+  try { fitAddon.fit(); } catch(e){}
+  termApi('resize', { rows: term.rows, cols: term.cols }).catch(() => {});
+}
+
+async function openTerm(){
+  const res = currentRes(); if (!res) return;
+  document.body.classList.add('term-open');
+  if (!term){
+    term = new Terminal({ fontSize: 13, fontFamily: 'Menlo, Consolas, monospace',
+      cursorBlink: true, scrollback: 8000,
+      theme: { background: '#10151d', foreground: '#d8e2f0', cursor: '#f08c3a' } });
+    fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open($('xterm'));
+    term.onData(d => { if (termRes) termApi('input', { d: b64enc(d) }).catch(() => {}); });
+    window.addEventListener('resize', termSendSize);
+  }
+  if (termES){ termES.close(); termES = null; }
+  termRes = res.name;
+  $('termttl').textContent = 'Terminal — ' + res.label;
+  term.reset();
+  let info;
+  try { info = await termApi('start'); }
+  catch(e){ term.writeln('\x1b[31mterminal error: ' + e + '\x1b[0m'); return; }
+  if (info.supported === false){
+    $('termcmd').textContent = '';
+    term.writeln('\x1b[33mno terminal command configured for this resource');
+    term.writeln('(set "term_cmd" in config.json, e.g. "ssh hazel")\x1b[0m');
+    return;
+  }
+  $('termcmd').textContent = info.cmd;
+  termSendSize();
+  termES = new EventSource('/api/term/stream?resource=' + encodeURIComponent(termRes) +
+                           '&t=' + encodeURIComponent(TOKEN));
+  termES.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.d) term.write(b64dec(m.d));
+    if (m.exit){ term.writeln('\r\n\x1b[33m[session ended — press restart to reconnect]\x1b[0m');
+                 termES.close(); termES = null; }
+  };
+  term.focus();
+}
+
+function closeTerm(){
+  document.body.classList.remove('term-open');
+  if (termES){ termES.close(); termES = null; }   // PTY keeps running server-side
+  setTimeout(() => { try { fitAddon && fitAddon.fit(); } catch(e){} }, 50);
+}
+
+$('termBtn').onclick = () => {
+  if (document.body.classList.contains('term-open') ) closeTerm(); else openTerm();
+};
+$('termClose').onclick = closeTerm;
+$('termRestart').onclick = async () => {
+  if (!termRes) return;
+  try { await termApi('kill'); } catch(e){}
+  openTerm();
+};
+
 $('sendBtn').onclick = send;
 $('stopBtn').onclick = stopRun;
 $('newChat').onclick = newChat;
@@ -453,6 +561,9 @@ resourceSel.onchange = updateMeta;
 input.addEventListener('input', autoGrow);
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); send(); }
+});
+resourceSel.addEventListener('change', () => {
+  if (document.body.classList.contains('term-open')) openTerm();  // follow the resource
 });
 loadConfig();
 input.focus();

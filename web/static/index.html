@@ -237,6 +237,7 @@ function currentRes(){ return CONFIG.resources.find(r => r.name === resourceSel.
 function updateMeta(){
   const res = currentRes(); if (!res) return;
   $('meta').textContent = 'Local: ' + res.dir;
+  document.title = 'ASCEND-Web — ' + (res.label || res.name).split(/[\s(—·]/)[0];
   $('note').textContent = res.note || '';
   const sid = sessionIds[res.name];
   addSys(sid ? ('Resource: ' + res.label + ' — continuing session') : ('Resource: ' + res.label));

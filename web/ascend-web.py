@@ -746,7 +746,28 @@ def main():
         print("Refusing to bind to %r — ASCEND-Web is localhost-only by design." % host)
         sys.exit(1)
 
-    httpd = ThreadingHTTPServer((host, port), Handler)
+    httpd = None
+    for p in range(port, port + 11):
+        try:
+            httpd = ThreadingHTTPServer((host, p), Handler)
+            break
+        except OSError as e:
+            if e.errno not in (48, 98):   # EADDRINUSE (mac, linux)
+                raise
+            who = "another program"
+            try:
+                import urllib.request
+                r = urllib.request.urlopen("http://%s:%d/" % (host, p), timeout=2)
+                if "ascend-web" in (r.headers.get("Server") or ""):
+                    who = "another ASCEND-Web instance"
+            except Exception:
+                pass
+            print("note: port %d is in use by %s — trying %d." % (p, who, p + 1))
+            print("      (to stop it:  lsof -ti tcp:%d | xargs kill)" % p)
+    if httpd is None:
+        print("error: no free port in %d-%d." % (port, port + 10))
+        sys.exit(1)
+    port = httpd.server_address[1]
     url = "http://%s:%d/?t=%s" % (host, port, TOKEN)
 
     print()

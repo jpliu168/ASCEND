@@ -339,7 +339,7 @@ async function sendMessage(text, isAuto){
   addUser(text, isAuto);
   busy = true; $('sendBtn').disabled = true; $('stopBtn').style.display = 'inline-block';
   const bubble = addAgentBubble();
-  let textBuf = '', textSpan = null;
+  let textBuf = '', textSpan = null, runModel = '';
 
   function ensureTextSpan(){
     if (!textSpan){
@@ -353,6 +353,7 @@ async function sendMessage(text, isAuto){
     else if (ev.type === 'session'){
       sessionIds[res.name] = ev.session_id;
       if (ev.model){
+        runModel = ev.model;
         $('modelSel').title = 'running model: ' + ev.model;
         const msel = $('modelSel');                 // learn what "Default" really is
         if (msel.value === '|'){
@@ -382,6 +383,7 @@ async function sendMessage(text, isAuto){
       if (!bubble.childNodes.length){ bubble.innerHTML = md(ev.result || '(no output)'); }
       let m = [];
       if (ev.duration_ms) m.push((ev.duration_ms/1000).toFixed(1) + 's');
+      if (runModel) m.push(runModel);
       if (m.length) addSys('done · ' + m.join(' · '));
     }
     else if (ev.type === 'files' && ev.files && ev.files.length){

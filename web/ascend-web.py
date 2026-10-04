@@ -482,7 +482,8 @@ class Handler(BaseHTTPRequestHandler):
                 env["TERM"] = "xterm-256color"
                 os.execvpe("/bin/bash", ["/bin/bash", "-lc", "exec " + cmd], env)
             with STATE.lock:
-                STATE.terms[resource] = {"pid": pid, "fd": fd, "gen": 0}
+                STATE.terms[resource] = {"pid": pid, "fd": fd, "gen": 0,
+                                         "buf": bytearray()}
             return self._send_json({"supported": True, "started": "new", "cmd": cmd})
 
         t = self._term_get(resource)
@@ -526,6 +527,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         fd = t["fd"]
         try:
+            # replay what this terminal has already shown (screen survives
+            # hiding the panel, switching resources, even a page reload)
+            if t.get("buf"):
+                self.wfile.write(sse({"d": base64.b64encode(bytes(t["buf"])).decode()}))
+                self.wfile.flush()
             while True:
                 with STATE.lock:
                     cur = STATE.terms.get(resource)
@@ -548,6 +554,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                     self._term_cleanup(resource)
                     break
+                buf = t.setdefault("buf", bytearray())
+                buf.extend(data)
+                if len(buf) > 262144:
+                    del buf[:len(buf) - 262144]
                 self.wfile.write(sse({"d": base64.b64encode(data).decode()}))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):

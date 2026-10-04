@@ -538,16 +538,26 @@ async function openTerm(){
   term.focus();
 }
 
-function closeTerm(){
+function hideTerm(){
+  // hide the panel only — the stream and the ssh session keep running
   document.body.classList.remove('term-open');
-  if (termES){ termES.close(); termES = null; }   // PTY keeps running server-side
-  setTimeout(() => { try { fitAddon && fitAddon.fit(); } catch(e){} }, 50);
+}
+
+function showTerm(){
+  const res = currentRes();
+  if (termES && res && termRes === res.name){   // same resource: just unhide
+    document.body.classList.add('term-open');
+    setTimeout(termSendSize, 60);
+    term && term.focus();
+    return;
+  }
+  openTerm();                                    // new or different resource
 }
 
 $('termBtn').onclick = () => {
-  if (document.body.classList.contains('term-open') ) closeTerm(); else openTerm();
+  if (document.body.classList.contains('term-open')) hideTerm(); else showTerm();
 };
-$('termClose').onclick = closeTerm;
+$('termClose').onclick = hideTerm;
 $('termRestart').onclick = async () => {
   if (!termRes) return;
   try { await termApi('kill'); } catch(e){}

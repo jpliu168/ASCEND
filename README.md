@@ -170,7 +170,7 @@ A minimal browser chat for the same agent — useful when you'd rather talk to A
 ascend-web            # starts http://127.0.0.1:8765 and opens your browser
 ```
 
-![ASCEND-Web: chat with the agent in the browser; result files render inline](docs/images/ascend-web.png)
+![ASCEND-Web: chat with the agent in the browser — live job strip with Watch, model picker, and result files rendered inline](docs/images/ascend-web.png)
 
 The resource dropdown is built from `web/config.json` — the shipped entries match the ASCEND defaults, and you edit the list to your own sites (a custom `ascend-<site>`, your campus cluster, a workstation). Before first use, seed each project directory once with the normal launcher (for example `ascend-ncshare -d ~/agents/ncshare/projects/web`, then exit) so the agent gets that site's rules. Headless mode cannot show permission prompts, so the server defaults to auto-approving the agent's commands — the same trust as an auto-approved CLI session; it binds only to 127.0.0.1 with a per-start access token, and `web/README.md` documents a tighter allowed-tools configuration. The web backend drives Claude Code only (the per-launch Codex choice does not apply here yet).
 

@@ -33,12 +33,9 @@
   .badge.duke { background:#012169; }
   .credit { text-align:center; color:var(--dim); font-size:11.5px; margin-top:4px; }
   .credit a { color: var(--blue); text-decoration:none; }
-  .cr-ncsu { color:#E8453C; font-weight:600; }   /* wolfpack red (bright for dark bg) */
-  .cr-duke { color:#418FDE; font-weight:600; }   /* duke blue (bright for dark bg) */
-  @media (prefers-color-scheme: light) {
-    .cr-ncsu { color:#CC0000; }
-    .cr-duke { color:#012169; }
-  }
+  .cr-ncsu, .cr-duke { color:#fff; font-weight:600; padding:1px 8px; border-radius:6px; }
+  .cr-ncsu { background:#CC0000; }   /* wolfpack red */
+  .cr-duke { background:#012169; }   /* duke blue */
   .credit a:hover { text-decoration:underline; }
   select, button {
     background:var(--panel2); color:var(--text); border:1px solid var(--line);

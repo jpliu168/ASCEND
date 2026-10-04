@@ -231,7 +231,7 @@ async function loadConfig(){
 function currentRes(){ return CONFIG.resources.find(r => r.name === resourceSel.value); }
 function updateMeta(){
   const res = currentRes(); if (!res) return;
-  $('meta').textContent = res.dir;
+  $('meta').textContent = 'Local: ' + res.dir;
   $('note').textContent = res.note || '';
   const sid = sessionIds[res.name];
   addSys(sid ? ('Resource: ' + res.label + ' — continuing session') : ('Resource: ' + res.label));

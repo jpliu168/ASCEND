@@ -52,6 +52,12 @@ DEFAULT_CONFIG = {
     "claude_bin": "",            # empty = auto-detect (PATH, then ~/.local/bin/claude)
     "permission_mode": "bypassPermissions",
     "allowed_tools": [],          # optional extra --allowedTools entries
+    "models": [                   # the model dropdown; id "" = the CLI's default
+        {"id": "",       "label": "Default model"},
+        {"id": "sonnet", "label": "Sonnet — fast, everyday"},
+        {"id": "opus",   "label": "Opus — most capable"},
+        {"id": "haiku",  "label": "Haiku — fastest, cheapest"}
+    ],
     "open_browser": True,
     "resources": [
         {
@@ -296,6 +302,7 @@ class Handler(BaseHTTPRequestHandler):
                 "resources": resources,
                 "claude": CLAUDE or "",
                 "permission_mode": CFG["permission_mode"],
+                "models": CFG.get("models") or [],
             })
 
         if url.path.startswith("/static/vendor/"):
@@ -573,6 +580,7 @@ class Handler(BaseHTTPRequestHandler):
         message = (body.get("message") or "").strip()
         resource = body.get("resource") or ""
         session_id = body.get("session_id") or None
+        model = (body.get("model") or "").strip()
         run_id = str(body.get("run_id") or secrets.token_hex(8))
 
         res = next((r for r in CFG["resources"] if r["name"] == resource), None)
@@ -634,6 +642,11 @@ class Handler(BaseHTTPRequestHandler):
         allowed = CFG.get("allowed_tools") or []
         if allowed:
             cmd += ["--allowedTools", ",".join(allowed)]
+        if model:
+            # only ids from the configured dropdown (an empty models list = allow any)
+            ids = {(m.get("id") or "") for m in (CFG.get("models") or [])}
+            if not ids or model in ids:
+                cmd += ["--model", model]
         if session_id:
             cmd += ["--resume", session_id]
 

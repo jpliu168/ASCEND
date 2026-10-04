@@ -53,8 +53,7 @@ ones you already use from the CLI. The shipped entries match the ASCEND
 defaults (NCShare / Hazel / hurricane); **edit the list to your own
 resources** — a custom `ascend-<site>` install, your own cluster, your
 workstation — and the dropdown shows exactly what you configure, nothing
-else. The bring-your-own-site wizard (`./install.sh add`) offers to add
-its new site here for you, terminal and job strip included.
+else.
 
 As with the CLI launchers: the Hazel resource needs the `hazel` ssh link
 warm (`ssh hazel`, once per 8 h — the web agent will tell you if it's cold),
@@ -81,6 +80,15 @@ With `default`, anything not in `allowed_tools` is simply refused in
 headless mode (the agent will say it couldn't run it) — safe, but the agent
 can do less.
 
+## Choosing the model
+
+A dropdown next to **Send** picks which Claude model handles your next
+message (Default / Sonnet / Opus / Haiku, editable via `models` in
+`config.json`). The choice is passed straight to `claude --model`, applies
+per message — you can switch mid-conversation — and is remembered by the
+browser. "Default model" uses whatever your Claude Code CLI is configured
+to use; hover the dropdown after a reply to see the exact model that ran.
+
 ## Config reference (`config.json`)
 
 | key | meaning |
@@ -89,6 +97,7 @@ can do less.
 | `claude_bin` | path to the `claude` CLI; empty = auto-detect (PATH, then `~/.local/bin/claude`) |
 | `permission_mode` | passed to `claude --permission-mode` (default `bypassPermissions`) |
 | `allowed_tools` | optional `--allowedTools` list |
+| `models` | the model dropdown next to Send: `{"id","label"}` entries; the id is passed as `claude --model` (ships with Default / Sonnet / Opus / Haiku; `""` = the CLI's default) |
 | `open_browser` | auto-open the URL on start |
 | `resources` | the dropdown: `name`, `label`, `dir` (working dir for the agent), `note` |
 
@@ -126,19 +135,7 @@ the agent is mid-run at that moment, the check fires right after.
 To add a strip for another resource, set its `queue_cmd`. For NCShare,
 note the `ncshare-agent` alias provisions a compute job on every
 connection, so do NOT point queue_cmd at it; use a plain login alias if
-you have one. A safe NCShare pattern that needs no ssh-config edits: give
-BOTH `term_cmd` and `queue_cmd` the same inline multiplexing options, so one
-login in the Terminal panel warms a socket the poller then reuses:
-
-```
-"term_cmd":  "ssh -o ControlMaster=auto -o ControlPath=~/.ssh/sockets/%C -o ControlPersist=8h <user>@login.ncshare.org",
-"queue_cmd": "ssh -o BatchMode=yes -o ControlMaster=auto -o ControlPath=~/.ssh/sockets/%C -o ControlPersist=8h <user>@login.ncshare.org 'squeue -u $USER -h -o \"%i|%T|%M|%j\"'"
-```
-
-The strip isn't limited to Slurm: `queue_cmd` just has to print
-`id|state|elapsed|name` lines, so a no-scheduler box can show GPU status
-instead (hurricane ships this — nvidia-smi piped through awk). On such a
-strip the rows never empty, so the Watch toggle simply never fires there.
+you have one.
 
 ## Built-in ssh terminal
 

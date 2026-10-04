@@ -114,6 +114,7 @@
   textarea:focus { outline:none; border-color: var(--orange); }
   #sendBtn { background:linear-gradient(90deg, var(--red), var(--orange)); color:#fff;
              border:none; font-weight:600; padding:11px 20px; }
+  #modelSel { max-width:190px; padding:11px 10px; font-size:13.5px; color:var(--dim); }
   .hint { color:var(--dim); font-size:12px; margin-top:6px; }
 </style>
 </head>
@@ -151,6 +152,7 @@
   <div class="wrap">
     <div class="inputrow">
       <textarea id="input" placeholder="Ask the agent — e.g. “check the queue on NCShare” or “submit a 1-GPU test job”"></textarea>
+      <select id="modelSel" title="which Claude model the agent uses (takes effect on your next message)"></select>
       <button id="sendBtn">Send</button>
     </div>
     <div class="hint">Enter to send · Shift+Enter for a newline · conversation continues until “New chat”</div>
@@ -231,6 +233,17 @@ async function loadConfig(){
     o.textContent = res.label + (res.exists ? '' : '  (dir will be created)');
     resourceSel.appendChild(o);
   }
+  const msel = $('modelSel'); msel.innerHTML = '';
+  for (const m of (CONFIG.models && CONFIG.models.length ? CONFIG.models : [{id:'',label:'Default model'}])){
+    const o = document.createElement('option');
+    o.value = m.id || ''; o.textContent = m.label || m.id;
+    msel.appendChild(o);
+  }
+  try {
+    const saved = localStorage.getItem('ascend_model');
+    if (saved !== null && [...msel.options].some(o => o.value === saved)) msel.value = saved;
+  } catch(e){}
+  msel.onchange = () => { try { localStorage.setItem('ascend_model', msel.value); } catch(e){} };
   updateMeta();
 }
 function currentRes(){ return CONFIG.resources.find(r => r.name === resourceSel.value); }
@@ -334,7 +347,10 @@ async function sendMessage(text, isAuto){
   }
   function handle(ev){
     if (ev.type === 'start'){ runId = ev.run_id; }
-    else if (ev.type === 'session'){ sessionIds[res.name] = ev.session_id; }
+    else if (ev.type === 'session'){
+      sessionIds[res.name] = ev.session_id;
+      if (ev.model) $('modelSel').title = 'running model: ' + ev.model;
+    }
     else if (ev.type === 'text'){
       textBuf += (textBuf ? '\n\n' : '') + ev.text;
       ensureTextSpan().innerHTML = md(textBuf); scrollDown();
@@ -372,7 +388,8 @@ async function sendMessage(text, isAuto){
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ t: TOKEN, message: text, resource: res.name,
-                             session_id: sessionIds[res.name] || null })
+                             session_id: sessionIds[res.name] || null,
+                             model: $('modelSel').value || null })
     });
     if (!r.ok){
       const e = await r.json().catch(() => ({}));

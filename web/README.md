@@ -53,7 +53,8 @@ ones you already use from the CLI. The shipped entries match the ASCEND
 defaults (NCShare / Hazel / hurricane); **edit the list to your own
 resources** — a custom `ascend-<site>` install, your own cluster, your
 workstation — and the dropdown shows exactly what you configure, nothing
-else.
+else. The bring-your-own-site wizard (`./install.sh add`) offers to add
+its new site here for you, terminal and job strip included.
 
 As with the CLI launchers: the Hazel resource needs the `hazel` ssh link
 warm (`ssh hazel`, once per 8 h — the web agent will tell you if it's cold),

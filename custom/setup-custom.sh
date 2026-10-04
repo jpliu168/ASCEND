@@ -242,6 +242,38 @@ json.dump(reg, open(p, "w"), indent=1)
 print(f"   registered '{site}' in ~/.ascend/sites.json (the ascend-all router now includes it)")
 PY
 
+# ---- 9. offer: register the site in ASCEND-Web --------------------------------
+WEBCFG="$ROOT/web/config.json"
+if [ -f "$WEBCFG" ] && command -v python3 >/dev/null 2>&1; then
+  ADDWEB="$(ask "Add '$SITE' to ASCEND-Web (browser chat, job strip, ssh terminal)? [Y/n]" "Y")"
+  case "$ADDWEB" in
+    n|N|no|NO) : ;;
+    *)
+      python3 - "$WEBCFG" "$SITE" "$KINDDESC" "$ALIAS" "$KIND" <<'PY'
+import json, sys
+p, site, kinddesc, alias, kind = sys.argv[1:6]
+cfg = json.load(open(p))
+rs = cfg.setdefault("resources", [])
+entry = {"name": site, "label": "%s (%s)" % (site, kinddesc),
+         "dir": "~/agents/custom/projects-%s/web" % site,
+         "note": "custom site over the '%s' ssh alias" % alias,
+         "term_cmd": "ssh %s" % alias}
+if kind == "slurm":
+    entry["queue_cmd"] = "ssh %s 'squeue -u $USER -h -o \"%%i|%%T|%%M|%%j\"'" % alias
+for i, r in enumerate(rs):
+    if r.get("name") == site:
+        rs[i] = entry
+        break
+else:
+    rs.append(entry)
+json.dump(cfg, open(p, "w"), indent=2)
+print("   added '%s' to ASCEND-Web (web/config.json) -- restart ascend-web to see it" % site)
+PY
+      echo "   Seed its web project dir once:  ascend-$SITE -d ~/agents/custom/projects-$SITE/web" >&2
+      ;;
+  esac
+fi
+
 echo
 say "done. Verify from a NEW terminal:   ascend-$SITE --check"
 if [ "$MODE" = "local" ]; then

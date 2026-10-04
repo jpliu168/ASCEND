@@ -246,17 +246,26 @@ async function loadConfig(){
     const saved = localStorage.getItem('ascend_model');
     if (saved !== null && [...msel.options].some(o => o.value === saved)) msel.value = saved;
   } catch(e){}
-  msel.onchange = () => { try { localStorage.setItem('ascend_model', msel.value); } catch(e){} };
+  msel.onchange = () => {
+    try { localStorage.setItem('ascend_model', msel.value); } catch(e){}
+    addSys('Model for next message: ' + modelLabel());
+  };
   updateMeta();
 }
 function currentRes(){ return CONFIG.resources.find(r => r.name === resourceSel.value); }
+function modelLabel(){
+  const msel = $('modelSel');
+  return msel.options.length ? msel.options[msel.selectedIndex].textContent : '';
+}
 function updateMeta(){
   const res = currentRes(); if (!res) return;
   $('meta').textContent = 'Local: ' + res.dir;
   document.title = 'ASCEND-Web — ' + (res.label || res.name).split(/[\s(—·]/)[0];
   $('note').textContent = res.note || '';
   const sid = sessionIds[res.name];
-  addSys(sid ? ('Resource: ' + res.label + ' — continuing session') : ('Resource: ' + res.label));
+  const ml = modelLabel();
+  addSys('Resource: ' + res.label + (sid ? ' — continuing session' : '') +
+         (ml ? (' · model: ' + ml) : ''));
   $('watchbox').checked = isWatch(res.name);
   $('jobsbar').style.display = 'none';
   pollJobs();

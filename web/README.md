@@ -126,7 +126,19 @@ the agent is mid-run at that moment, the check fires right after.
 To add a strip for another resource, set its `queue_cmd`. For NCShare,
 note the `ncshare-agent` alias provisions a compute job on every
 connection, so do NOT point queue_cmd at it; use a plain login alias if
-you have one.
+you have one. A safe NCShare pattern that needs no ssh-config edits: give
+BOTH `term_cmd` and `queue_cmd` the same inline multiplexing options, so one
+login in the Terminal panel warms a socket the poller then reuses:
+
+```
+"term_cmd":  "ssh -o ControlMaster=auto -o ControlPath=~/.ssh/sockets/%C -o ControlPersist=8h <user>@login.ncshare.org",
+"queue_cmd": "ssh -o BatchMode=yes -o ControlMaster=auto -o ControlPath=~/.ssh/sockets/%C -o ControlPersist=8h <user>@login.ncshare.org 'squeue -u $USER -h -o \"%i|%T|%M|%j\"'"
+```
+
+The strip isn't limited to Slurm: `queue_cmd` just has to print
+`id|state|elapsed|name` lines, so a no-scheduler box can show GPU status
+instead (hurricane ships this — nvidia-smi piped through awk). On such a
+strip the rows never empty, so the Watch toggle simply never fires there.
 
 ## Built-in ssh terminal
 

@@ -23,7 +23,8 @@
       "name": "hurricane",
       "label": "hurricane (single GPU, MEAS)",
       "dir": "~/agents/hurricane/projects/web",
-      "note": "Direct on campus; via the hazel-vcl jump off campus."
+      "note": "Direct on campus; via the hazel-vcl jump off campus.",
+      "queue_cmd": "ssh hurricane \"nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv,noheader\" | awk -F', ' '{printf \"GPU%s|%s util|%s used|of %s\\n\", $1, $2, $3, $4}'"
     },
     {
       "name": "local",

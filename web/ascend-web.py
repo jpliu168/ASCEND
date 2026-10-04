@@ -480,7 +480,10 @@ class Handler(BaseHTTPRequestHandler):
                 extra = os.pathsep.join(os.path.expanduser(p) for p in ("~/.local/bin", "~/bin"))
                 env["PATH"] = extra + os.pathsep + env.get("PATH", "")
                 env["TERM"] = "xterm-256color"
-                os.execvpe("/bin/bash", ["/bin/bash", "-lc", "exec " + cmd], env)
+                # plain (non-login) shell: avoids sourcing ~/.bash_profile just
+                # to launch ssh; PATH is already set up above. The local
+                # "$SHELL" terminal still gets a login shell of its own.
+                os.execvpe("/bin/bash", ["/bin/bash", "-c", "exec " + cmd], env)
             with STATE.lock:
                 STATE.terms[resource] = {"pid": pid, "fd": fd, "gen": 0,
                                          "buf": bytearray()}

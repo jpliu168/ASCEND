@@ -77,6 +77,7 @@ To install exactly one arrangement without the menu:
 ./install.sh hurricane    # MEAS single-GPU box only
 ./install.sh add          # link YOUR OWN HPC or workstation (any campus)
 ./install.sh router       # just the ascend-all front door
+./install.sh web          # ascend-web, the browser chat UI (see "Web interface" below)
 ./install.sh all          # the interactive menu (default)
 ```
 

@@ -47,13 +47,24 @@ The agent reasons through a cloud language model that never has cluster access. 
 
 ## Quick start
 
+**First-time install:**
+
 ```bash
 git clone https://github.com/jpliu168/ASCEND.git
 cd ASCEND
 ./install.sh
 ```
 
-The installer asks which resources you want and loops until you say you are done. Re-run it any time to add another. **Keep the clone** after installing: the commands it puts in `~/.local/bin` are symlinks into this directory, so a later `git pull` updates every installed command in place.
+The installer asks which resources you want and loops until you say you are done. Re-run it any time to add another. **Keep the clone** after installing: the commands it puts in `~/.local/bin` are symlinks into this directory, so updating is a `git pull` away.
+
+**Already installed? Update like this** (running `git clone` again fails with `fatal: destination path 'ASCEND' already exists`):
+
+```bash
+cd ASCEND     # the directory you cloned the first time
+git pull
+```
+
+A `git pull` updates every installed command in place — no need to re-run `install.sh` unless you want to add another resource.
 
 > [!warning]
 > Do not run `install.sh` from a TMUX session on your machine as it will not open a new terminal to warm up the SSH connection. Run it from a regular terminal session.

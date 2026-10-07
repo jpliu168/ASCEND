@@ -1,5 +1,15 @@
 # ASCEND
 
+> 📢 **Seminar — NC State AI Research Seminar Series**
+>
+> **[How to Build Your Personal AI-Powered Autonomous Scientific Computing System: A Demo of the NC State/Duke/UNC ASCEND System](https://csc.ncsu.edu/event/how-to-build-a-personal-ai-powered-autonomous-scientific-computing-system-a-demo-of-the-nc-state-ascend-system/)**
+>
+> 🗓️ Friday, October 9th @ 11:00 am – 12:00 pm (ET) · Online only
+> Host: NC State Computer Science, Dr. DK Xu
+>
+> **Zoom:** <https://ncsu.zoom.us/j/97688532096?pwd=bmy7Kf64eXHQa80KGBpuYa3yYU1v1M.1>
+> Meeting ID: `976 8853 2096` · Passcode: `813477`
+
 **Autonomous Scientific Computing Engine and Novel Discovery**
 
 📄 **Paper:** [ASCEND: Personal AI Agents for Autonomous Scientific Computing Across HPC Clusters and GPU Workstations](https://arxiv.org/abs/2609.32868) (arXiv:2609.32868)

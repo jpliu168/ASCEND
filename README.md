@@ -6,9 +6,6 @@
 >
 > 🗓️ Friday, October 9th @ 11:00 am – 12:00 pm (ET) · Online only
 > Host: NC State Computer Science, Dr. DK Xu
->
-> **Zoom:** <https://ncsu.zoom.us/j/97688532096?pwd=bmy7Kf64eXHQa80KGBpuYa3yYU1v1M.1>
-> Meeting ID: `976 8853 2096` · Passcode: `813477`
 
 **Autonomous Scientific Computing Engine and Novel Discovery**
 

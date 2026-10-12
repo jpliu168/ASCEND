@@ -167,7 +167,7 @@ for l in "$HERE/ascend-ncshare/bin/ascend-ncshare" \
          "$ROOT/common/mac/bin/paper-grab"; do
   [ -f "$l" ] && ln -sf "$l" "$HOME/.local/bin/$(basename "$l")"
 done
-case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) echo "  NOTE: add ~/.local/bin to PATH:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;; esac
+. "$ROOT/common/ascend/lib/ensure-path.sh"; ascend_ensure_path
 
 say "Done. NCShare user: $UNITY   (cluster work dir: /work/$UNITY)"
 echo "   Check:      ascend-ncshare --check     (tests both cluster aliases end-to-end)"

@@ -9,8 +9,5 @@ chmod +x "$HERE/bin/ascend-web" "$HERE/ascend-web.py" 2>/dev/null
 ln -sfn "$HERE/bin/ascend-web" "$HOME/.local/bin/ascend-web"
 echo "Linked: ~/.local/bin/ascend-web -> $HERE/bin/ascend-web"
 
-case ":$PATH:" in
-  *":$HOME/.local/bin:"*) echo "Ready — run: ascend-web" ;;
-  *) echo "NOTE: ~/.local/bin is not in PATH in this shell."
-     echo "      Open a new terminal, or add to ~/.zshrc:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-esac
+. "$HERE/../common/ascend/lib/ensure-path.sh"; ascend_ensure_path
+case ":$PATH:" in *":$HOME/.local/bin:"*) echo "Ready — run: ascend-web" ;; esac

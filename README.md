@@ -212,11 +212,7 @@ You also need macOS, Linux, or Windows with WSL (Ubuntu), plus `bash`, `ssh`, `r
 
 Claude Code with a Claude subscription must be installed on the laptop (the installer offers to fetch it; run `claude` once afterwards to log in). Codex is optional — install it only if you plan to pick it as the agent (see "Choose your agent: Claude Code or Codex" above).
 
-If `~/.local/bin` is not already on your `PATH`, add it:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+The installer puts `~/.local/bin` on your `PATH` automatically (it adds one guarded `export` line to your shell rc file if needed). After it finishes, open a new terminal — or `source` the file it names — and the `ascend-*` commands are available.
 
 ---
 

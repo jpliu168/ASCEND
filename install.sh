@@ -55,10 +55,7 @@ case "$TARGET" in
   *) die "unknown target '$TARGET' (expected: all, hazel, ncshare, hurricane, add, router, web)" ;;
 esac
 
-case ":$PATH:" in
-  *":$HOME/.local/bin:"*) : ;;
-  *) say "add ~/.local/bin to your PATH:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-esac
+. "$HERE/common/ascend/lib/ensure-path.sh"; ascend_ensure_path
 if [ "$TARGET" = web ]; then
   say "done -- start it from a NEW terminal:  ascend-web"
 else

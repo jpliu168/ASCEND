@@ -8,3 +8,4 @@ dist/
 *.tar.gz
 _to_delete/
 .claude/settings.local.json
+Claude outputs/

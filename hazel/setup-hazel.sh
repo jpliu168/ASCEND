@@ -156,7 +156,7 @@ for l in "$HERE/ascend-hazel/bin/ascend-hazel" \
          "$ROOT/common/ascend/bin/fetch-paper"; do
   [ -f "$l" ] && ln -sf "$l" "$HOME/.local/bin/$(basename "$l")"
 done
-case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) echo "  NOTE: add ~/.local/bin to PATH:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;; esac
+. "$ROOT/common/ascend/lib/ensure-path.sh"; ascend_ensure_path
 
 # Read back the real detected path rather than re-guessing it -- install.sh
 # (run by deploy-hazel.sh above) exported it into ~/.bashrc on the node.

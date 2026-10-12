@@ -68,9 +68,7 @@ for l in "$HERE/common/ascend-all/bin/ascend-all" "$HERE/common/ascend-all/bin/a
   [ -f "$l" ] && ln -sf "$l" "$HOME/.local/bin/$(basename "$l")"
 done
 say "ascend-all router installed (ascend-all / ascend-probe)"
-case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *)
-  echo "  NOTE: add ~/.local/bin to PATH:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-esac
+. "$HERE/common/ascend/lib/ensure-path.sh"; ascend_ensure_path
 
 echo
 say "Done.${DONE:+ Set up:$DONE}"

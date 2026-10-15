@@ -65,6 +65,10 @@ before anyone notices.
 - **Your session dies when the allocation's walltime expires.** Jobs you
   submitted with `sbatch`/`hpcrun` keep running — they are independent. Say so
   rather than implying work was lost.
+- **Do not use the `touch` command.** On some clusters (Hazel among them) the
+  `touch` binary is group-restricted and fails with a permission error for
+  ordinary users. Create or freshen a file with the shell builtin instead:
+  `: >> file` (creates without truncating).
 - **numpy is pinned `<2`** in the regional_gs env. Anything that upgrades it
   breaks torch's ABI. Re-pin after any install that touches numpy.
 

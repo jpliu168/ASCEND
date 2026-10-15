@@ -24,7 +24,7 @@ if ! grep -q "^Host hurricane\$" "$SSHCFG" 2>/dev/null; then
   case "$a" in [Nn]*) echo "  skipped hurricane."; exit 1 ;; esac
   U="$(ask 'Your Unity ID on hurricane')"
   [ -n "$U" ] || { echo "  Unity ID required -- skipped hurricane."; exit 1; }
-  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; touch "$SSHCFG"; chmod 600 "$SSHCFG"
+  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; : >> "$SSHCFG"; chmod 600 "$SSHCFG"
   { printf '\n'
     cat <<EOF
 # added by ASCEND setup-hurricane.sh ($(date +%F)) -- MEAS hurricane (single-GPU box)

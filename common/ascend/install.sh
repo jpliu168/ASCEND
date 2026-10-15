@@ -263,7 +263,7 @@ mkdir -p "$WORK/tmp" "$WORK/.pipcache" "$WORK/agent-workspaces" "$WORK/agent-pro
 ASCEND="${ASCEND_HOME:-$HOME/.ascend}"
 say "knowledge base -> $ASCEND/knowledge   (survives the scratch purge)"
 mkdir -p "$ASCEND/knowledge" "$ASCEND/tools"
-touch "$ASCEND/knowledge/lessons.jsonl"
+: >> "$ASCEND/knowledge/lessons.jsonl"   # (not `touch`: group-restricted on some clusters, e.g. Hazel)
 
 # Display name for the status line. A resource's deploy.sh can name itself with
 # ASCEND_SITE_NAME; otherwise derive it from the detected site, falling back to

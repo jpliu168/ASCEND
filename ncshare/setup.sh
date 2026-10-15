@@ -108,7 +108,7 @@ GUIDE
   UNITY="$(ask 'Your NCShare username (e.g. rhe1)')"
   [ -n "$UNITY" ] || { echo "username required."; exit 1; }
   mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-  touch "$SSHCFG"; chmod 600 "$SSHCFG"
+  : >> "$SSHCFG"; chmod 600 "$SSHCFG"
   for m in $MISSING; do
     case "$m" in
       ncshare-agent)     PROXY_ARGS="--name agent" ;;

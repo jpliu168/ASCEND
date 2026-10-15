@@ -59,7 +59,7 @@ else
   [ -n "$HOSTN" ] || die "hostname required."
   U="$(ask "Your username on $HOSTN")"
   [ -n "$U" ] || die "username required."
-  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; touch "$SSHCFG"; chmod 600 "$SSHCFG"
+  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; : >> "$SSHCFG"; chmod 600 "$SSHCFG"
   { printf '\n'
     cat <<EOF
 # added by ASCEND setup-custom.sh ($(date +%F)) -- custom site '$SITE'

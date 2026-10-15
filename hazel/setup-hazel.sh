@@ -107,7 +107,7 @@ GUIDE
   UNITY="$(ask 'Your Unity ID (e.g. jdoe2)')"
   [ -n "$UNITY" ] || { echo "Unity ID required."; exit 1; }
   mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-  touch "$SSHCFG"; chmod 600 "$SSHCFG"
+  : >> "$SSHCFG"; chmod 600 "$SSHCFG"
   { printf '\n'
     cat <<EOF
 # added by ASCEND ncsuhpc/setup-hazel.sh ($(date +%F)) -- multiplexed Hazel login-node alias

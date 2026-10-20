@@ -59,7 +59,7 @@ The agent reasons through a cloud language model that never has cluster access. 
 >   Restart your computer when prompted, open the **Ubuntu** app, and run all the commands below inside that Ubuntu terminal.
 > - **Linux** — any terminal works.
 
-**First-time install (from your local computer):**
+**First-time install (from your LOCAL computer's terminal):**
 
 ```bash
 git clone https://github.com/jpliu168/ASCEND.git

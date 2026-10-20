@@ -47,6 +47,18 @@ The agent reasons through a cloud language model that never has cluster access. 
 
 ## Quick start
 
+> ⚠️ **Where to run these commands:** on your **local computer** (the laptop or desktop you work from) — **NOT on your cluster login node!** ASCEND runs on your machine and reaches the cluster over SSH; nothing gets installed on the cluster.
+>
+> - **Mac** — use the built-in Terminal app; no extra setup needed.
+> - **Windows** — ASCEND needs a Linux environment. Open PowerShell as Administrator and install Ubuntu via WSL:
+>
+>   ```powershell
+>   wsl.exe --install
+>   ```
+>
+>   Restart your computer when prompted, open the **Ubuntu** app, and run all the commands below inside that Ubuntu terminal.
+> - **Linux** — any terminal works.
+
 **First-time install:**
 
 ```bash
